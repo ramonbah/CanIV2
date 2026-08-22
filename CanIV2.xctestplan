@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "D461FA40-4A51-459F-944B-DDBD718FA6CC",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:CanIV2.xcodeproj",
+      "identifier" : "6F2552B4301F24D00033A122",
+      "name" : "CanIV2"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:CanIV2.xcodeproj",
+        "identifier" : "6F2552C3301F24D20033A122",
+        "name" : "CanIV2Tests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:CanIV2.xcodeproj",
+        "identifier" : "6F2552CD301F24D20033A122",
+        "name" : "CanIV2UITests"
+      }
+    }
+  ],
+  "version" : 1
+}
