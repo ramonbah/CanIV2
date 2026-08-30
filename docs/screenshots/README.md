@@ -1,6 +1,6 @@
 # README screenshot capture
 
-Capture these five screens from an **iPhone 17 simulator in portrait**, using the same deterministic fictional dataset and the app's default text size.
+Capture these seven screens from an **iPhone 17 simulator in portrait**, using the same deterministic fictional dataset and the app's default text size.
 
 | File | Screen | What should be visible |
 | --- | --- | --- |
@@ -9,6 +9,8 @@ Capture these five screens from an **iPhone 17 simulator in portrait**, using th
 | `transactions.png` | Transactions | Submitted results plus expanded hierarchical Budget → Plan → Item filters |
 | `reports.png` | Plan Reports | A meaningful report chart, summary, and breakdown |
 | `time-effort.png` | Time Effort | Calculator result and assumptions, with salary itself hidden |
+| `rollover.png` | Roll Over Items | An earlier source Plan and selectable Items being carried into a later Plan |
+| `recurring.png` | Budget detail | Active and Needs Destination recurring templates with distinct statuses |
 
 ## Capture rules
 
@@ -22,4 +24,6 @@ Capture these five screens from an **iPhone 17 simulator in portrait**, using th
 
 Xcode or a simulator-capable coding agent can launch the app, seed the data, navigate to each state, and save screenshots with Simulator's capture command or `xcrun simctl io booted screenshot <path>`.
 
-After all five files exist, replace the screenshot comment in the root `README.md` with the prepared Markdown table inside that comment.
+Run only `ReadmeScreenshotCaptureTests/testCaptureReadmeScreenshots`. It refreshes all seven images; no unrelated test is needed.
+
+After all seven files exist, replace the Phase 4 screenshot comment in the root `README.md` with the prepared Markdown table inside that comment.

@@ -19,6 +19,10 @@ Screenshots were captured from a deterministic iPhone 17 simulator dataset. See 
 |:---:|:---:|
 | ![Plan reports](docs/screenshots/reports.png) | ![Time Effort calculator](docs/screenshots/time-effort.png) |
 
+| Rollover | Recurring templates |
+|:---:|:---:|
+| ![Select Items to roll into a later Plan](docs/screenshots/rollover.png) | ![Recurring transaction templates](docs/screenshots/recurring.png) |
+
 ## What it can do
 
 - Organize finances into Budgets, Plans, Items, and Transactions.
@@ -32,6 +36,12 @@ Screenshots were captured from a deterministic iPhone 17 simulator dataset. See 
 - Review Home, Budget, and Plan reports with shared reporting periods and accessible summaries.
 - Distinguish effective income from future scheduled income.
 - Show current-year dates without repeating the year.
+- Roll selected Items from an earlier Plan into a later Plan without copying Transactions.
+- Create daily, weekly, monthly, or yearly recurring transaction templates.
+- Pause and resume templates, catch up due occurrences, and generate each occurrence exactly once.
+- Keep templates when their destination Item is deleted and let the user repair the destination.
+- Compare recurring projections separately from actual generated Transactions.
+- Hide redundant zero-value metrics and replace empty report charts with a concise empty state.
 
 ## Time Effort
 
@@ -64,10 +74,10 @@ No external package installation or service credentials are required.
 
 ## Tests
 
-The current checkpoint contains **153 tests**:
+The current checkpoint contains **167 enabled tests**:
 
-- 106 domain, service, persistence, and coordinator tests
-- 47 UI tests
+- 118 domain, service, persistence, and coordinator tests
+- 49 UI tests
 
 Run the shared `CanIV2.xctestplan` from Xcode. Some end-to-end UI tests are intentionally split into smaller cases to remain within the test runner's per-call time limit.
 
@@ -81,16 +91,17 @@ Run the shared `CanIV2.xctestplan` from Xcode. Some end-to-end UI tests are inte
 
 ## Project status
 
-Completed work includes the core hierarchy, search and filters, reports, observation refinements, deletion safety, and Time Effort.
+Completed work includes the core hierarchy, search and filters, reports, observation refinements, deletion safety, Time Effort, rollover, and recurring transactions.
 
 Planned phases include:
 
-- Rollover and recurring transactions
 - On-device receipt capture and OCR
 - Device-to-device transfer
 - Broader device, accessibility, migration, recovery, and release hardening
 
-Before release, the project still needs broader device verification and a complete legacy-store migration and startup-recovery test matrix.
+Phase 4 adds no production model fields: it uses the rollover and recurrence fields already present in the Phase 3 SwiftData schema. An on-disk Phase 3-shaped store reopen test verifies that existing records and relationships survive. Future schema changes must add explicit migration coverage before shipping.
+
+Before release, the project still needs broader device verification and a complete legacy-store migration and startup-recovery failure matrix.
 
 Detailed product and implementation decisions live in [`PRODUCT_SPEC.md`](PRODUCT_SPEC.md), [`UI_SPEC.md`](UI_SPEC.md), and the phase briefs in this repository.
 

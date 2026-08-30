@@ -21,6 +21,7 @@ final class BudgetingCoordinator {
     private let transactionRepository: SwiftDataTransactionRepository
     private let localDayScheduler: LocalDayRefreshScheduler
     private let salaryStore: SalarySecureStore
+    @ObservationIgnored private var recurrenceCoordinator: RecurrenceGenerationCoordinator
 
     private(set) var budgets: [Budget] = []
     private(set) var settings: AppSettings?
@@ -67,6 +68,7 @@ final class BudgetingCoordinator {
         self.planRepository = SwiftDataBudgetPlanRepository(context: context)
         self.itemRepository = SwiftDataBudgetItemRepository(context: context)
         self.transactionRepository = SwiftDataTransactionRepository(context: context)
+        self.recurrenceCoordinator = RecurrenceGenerationCoordinator(context: context)
         self.asOfDate = clock.now
         self.selectedTab = MainTab(rawValue: UserDefaults.standard.string(forKey: "phase2.selectedTab") ?? "") ?? .home
         self.expandedBudgetID = preferences.expandedBudgetID
@@ -107,6 +109,13 @@ final class BudgetingCoordinator {
         } catch {
             lastErrorMessage = error.localizedDescription
         }
+    }
+
+    @discardableResult
+    func processDueRecurringTransactions(limit: Int = 100) throws -> Int {
+        let count = try recurrenceCoordinator.processDueTemplates(in: budgets, clock: FixedClock(now: clock.now, calendar: clock.calendar), limit: limit)
+        refresh()
+        return count
     }
 
     func clearError() {
@@ -407,6 +416,17 @@ final class BudgetingCoordinator {
         SortUseCase().items(plan.budgetItems, direction: itemSortDirection(for: plan), asOf: asOfDate, calendar: clock.calendar)
     }
 
+    func rolloverSourcePlans(for destinationPlan: BudgetPlan) -> [RolloverSourcePlan] {
+        RolloverUseCase(context: context).sourcePlans(for: destinationPlan)
+    }
+
+    @discardableResult
+    func rollItems(from sourcePlan: BudgetPlan, itemIDs: Set<UUID>, into destinationPlan: BudgetPlan) throws -> [BudgetItem] {
+        let items = try RolloverUseCase(context: context).rollItems(from: sourcePlan, itemIDs: itemIDs, into: destinationPlan, now: clock.now)
+        refresh()
+        return items
+    }
+
     func visibleItemClassifications(for plan: BudgetPlan) -> [BudgetItemClassification] {
         let classifications = Set(sortedItems(for: plan).map { itemClassification(for: $0) })
         return [.available, .spent, .income].filter { classifications.contains($0) }
@@ -683,6 +703,14 @@ final class BudgetingCoordinator {
         return reportService.budgetSnapshot(budget: budget, period: reportingPeriod, interval: interval, formatter: formatter)
     }
 
+    func recurringReportSnapshot(for budget: Budget) -> RecurringBudgetReportSnapshot {
+        RecurringReportService(calendar: clock.calendar, asOf: asOfDate, formatter: formatter).snapshot(for: budget)
+    }
+
+    func recurringStatus(for template: RecurringTransactionTemplate) -> RecurringTemplateStatus {
+        RecurringReportService(calendar: clock.calendar, asOf: asOfDate, formatter: formatter).status(for: template)
+    }
+
     func planReportSnapshot(for plan: BudgetPlan) -> PlanReportSnapshot {
         reportService.planSnapshot(plan: plan, period: reportingPeriod, timelineMode: planTimelineMode(for: plan), formatter: formatter)
     }
@@ -737,6 +765,59 @@ final class BudgetingCoordinator {
 
     func isScheduledIncome(_ transaction: Transaction) -> Bool {
         transaction.kind == .income && !Phase2Calculations.isEffective(transaction, asOf: asOfDate, calendar: clock.calendar)
+    }
+
+    @discardableResult
+    func createRecurringTemplate(name: String, amountText: String, kind: TransactionKind, frequency: RecurrenceFrequency, intervalText: String, startDate: Date, endDate: Date?, budget: Budget, destination: BudgetItem?) throws -> RecurringTransactionTemplate {
+        let amount = try parsePositiveAmount(amountText)
+        let interval = try parsePositiveWholeNumber(intervalText)
+        let template = try RecurringTemplateUseCase(context: context).create(
+            name: name,
+            amount: amount,
+            kind: kind,
+            frequency: frequency,
+            interval: interval,
+            startDate: startDate,
+            endDate: endDate,
+            budget: budget,
+            destination: destination,
+            clock: FixedClock(now: clock.now, calendar: clock.calendar)
+        )
+        refresh()
+        return template
+    }
+
+    func updateRecurringTemplate(_ template: RecurringTransactionTemplate, name: String, amountText: String, kind: TransactionKind, frequency: RecurrenceFrequency, intervalText: String, startDate: Date, endDate: Date?, destination: BudgetItem?) throws {
+        let amount = try parsePositiveAmount(amountText)
+        let interval = try parsePositiveWholeNumber(intervalText)
+        try RecurringTemplateUseCase(context: context).update(
+            template,
+            name: name,
+            amount: amount,
+            kind: kind,
+            frequency: frequency,
+            interval: interval,
+            startDate: startDate,
+            endDate: endDate,
+            destination: destination,
+            clock: FixedClock(now: clock.now, calendar: clock.calendar)
+        )
+        refresh()
+    }
+
+    func setRecurringTemplateEnabled(_ template: RecurringTransactionTemplate, enabled: Bool) throws {
+        try RecurringTemplateUseCase(context: context).setEnabled(enabled, for: template, clock: FixedClock(now: clock.now, calendar: clock.calendar))
+        refresh()
+    }
+
+    func repairRecurringTemplate(_ template: RecurringTransactionTemplate, destination: BudgetItem) throws {
+        try RecurringTemplateUseCase(context: context).repairDestination(destination, for: template, clock: FixedClock(now: clock.now, calendar: clock.calendar))
+        refresh()
+    }
+
+    func deleteRecurringTemplate(_ template: RecurringTransactionTemplate) throws {
+        try RecurringTemplateUseCase(context: context).delete(template)
+        refresh()
     }
 
     func createTransaction(kind: TransactionKind, amountText: String, date: Date, notes: String, item: BudgetItem) throws -> Transaction {
@@ -885,6 +966,11 @@ final class BudgetingCoordinator {
         return multiplier
     }
 
+    func parsePositiveWholeNumber(_ text: String) throws -> Int {
+        let value = try parseMultiplier(text)
+        return Int(truncating: value as NSDecimalNumber)
+    }
+
 #if DEBUG
     func seedRoundingMismatchForUITesting() {
         guard ProcessInfo.processInfo.environment["UI_TESTING_SEED_ROUNDING"] == "1", budgets.isEmpty else { return }
@@ -962,6 +1048,11 @@ final class BudgetingCoordinator {
             let hotel = try ItemUseCase(repository: itemRepository).create(name: "Hotel Balance", unitAmount: 300, multiplier: 1, in: august, now: now)
             let reimbursement = try ItemUseCase(repository: itemRepository).create(name: "Client Reimbursement", unitAmount: 0, multiplier: 1, in: august, now: now)
 
+            let julyDate = clock.calendar.date(byAdding: .month, value: -1, to: now) ?? now.addingTimeInterval(-2_592_000)
+            let july = try PlanUseCase(repository: planRepository).create(name: "July Essentials", startingAmount: 1_100, in: household, now: julyDate)
+            _ = try ItemUseCase(repository: itemRepository).create(name: "Weekly groceries", unitAmount: 200, multiplier: 1, in: july, now: julyDate)
+            _ = try ItemUseCase(repository: itemRepository).create(name: "Utility reserve", unitAmount: 140, multiplier: 1, in: july, now: julyDate.addingTimeInterval(1))
+
             let travel = try BudgetUseCase(repository: budgetRepository).create(name: "City Break Budget", now: now.addingTimeInterval(-20))
             let weekend = try PlanUseCase(repository: planRepository).create(name: "Weekend Plan", startingAmount: 450, in: travel, now: now.addingTimeInterval(-20))
             let transit = try ItemUseCase(repository: itemRepository).create(name: "Transit Passes", unitAmount: 80, multiplier: 1, in: weekend, now: now.addingTimeInterval(-20))
@@ -973,6 +1064,10 @@ final class BudgetingCoordinator {
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .expense, amount: 42, date: twoDaysAgo, notes: "Train tickets", item: transit, clock: FixedClock(now: now.addingTimeInterval(4), calendar: clock.calendar))
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .expense, amount: 58, date: fiveDaysAgo, notes: "Cafe lunch", item: meals, clock: FixedClock(now: now.addingTimeInterval(5), calendar: clock.calendar))
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .income, amount: 90, date: eightDaysAgo, notes: "Travel refund", item: transit, clock: FixedClock(now: now.addingTimeInterval(6), calendar: clock.calendar))
+
+            let nextWeek = clock.calendar.date(byAdding: .day, value: 7, to: now) ?? now.addingTimeInterval(604_800)
+            _ = try createRecurringTemplate(name: "Weekly groceries", amountText: "120", kind: .expense, frequency: .weekly, intervalText: "1", startDate: nextWeek, endDate: nil, budget: household, destination: groceries)
+            _ = try createRecurringTemplate(name: "Streaming renewal", amountText: "35", kind: .expense, frequency: .monthly, intervalText: "1", startDate: nextWeek, endDate: nil, budget: household, destination: nil)
 
             expandedBudgetID = household.id
             navigationSelection.selectBudget(household.id)

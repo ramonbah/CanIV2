@@ -16,7 +16,7 @@ final class ReadmeScreenshotCaptureTests: XCTestCase {
     @MainActor
     func testCaptureReadmeScreenshots() throws {
         let outputDirectory = ProcessInfo.processInfo.environment["README_SCREENSHOT_OUTPUT_DIR"]
-            ?? "/Users/ramonjrbahio/Documents/CanIV2/docs/screenshots"
+            ?? "/Users/ramonjrbahio/Documents/GitHub/CanIV2/docs/screenshots"
         try FileManager.default.createDirectory(atPath: outputDirectory, withIntermediateDirectories: true)
 
         let app = launchApp(selectedTab: "home")
@@ -24,11 +24,31 @@ final class ReadmeScreenshotCaptureTests: XCTestCase {
         capture("home.png", outputDirectory: outputDirectory)
 
         app.tabBars.buttons["Budgets"].tap()
+        let recurringTemplate = element(identifier: "recurring-template-Weekly groceries", in: app)
+        for _ in 0..<6 where !recurringTemplate.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(recurringTemplate.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(element(identifier: "recurring-template-Streaming renewal", in: app).waitForExistence(timeout: 3), app.debugDescription)
+        capture("recurring.png", outputDirectory: outputDirectory)
+
+        for _ in 0..<6 where !app.buttons["plan-row-August Essentials"].exists {
+            app.swipeDown()
+        }
         let augustPlan = app.buttons["plan-row-August Essentials"]
         XCTAssertTrue(augustPlan.waitForExistence(timeout: 10), app.debugDescription)
         augustPlan.tap()
         XCTAssertTrue(app.navigationBars["August Essentials"].waitForExistence(timeout: 10), app.debugDescription)
         capture("plan-items.png", outputDirectory: outputDirectory)
+
+        app.buttons["plan-add-menu"].tap()
+        let rollover = app.buttons["rollover-items"]
+        XCTAssertTrue(rollover.waitForExistence(timeout: 3), app.debugDescription)
+        rollover.tap()
+        XCTAssertTrue(app.navigationBars["Roll Over Items"].waitForExistence(timeout: 8), app.debugDescription)
+        XCTAssertTrue(app.buttons["rollover-item-Weekly groceries"].waitForExistence(timeout: 5), app.debugDescription)
+        capture("rollover.png", outputDirectory: outputDirectory)
+        app.buttons["Cancel"].tap()
 
         app.tabBars.buttons["Transactions"].tap()
         XCTAssertTrue(app.textFields["transactions-search"].waitForExistence(timeout: 10), app.debugDescription)
@@ -93,6 +113,10 @@ final class ReadmeScreenshotCaptureTests: XCTestCase {
         }
         XCTAssertTrue(element.waitForExistence(timeout: 1), app.debugDescription)
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+    }
+
+    private func element(identifier: String, in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
 }

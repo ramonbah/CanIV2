@@ -165,8 +165,8 @@ struct FlowChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line", description: Text("No values to chart for this period."))
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart(buckets) { bucket in
                 BarMark(
@@ -232,7 +232,7 @@ struct ReportDetailView: View {
                 Text(rangeTitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                ReportDetailChart(kind: chartKind, buckets: buckets, rows: rows, formatter: formatter)
+                ReportDetailChart(kind: chartKind, buckets: buckets, rows: rows, transactions: transactions, formatter: formatter)
                     .frame(minHeight: 220)
                 Text(summary)
                     .font(.callout)
@@ -242,10 +242,11 @@ struct ReportDetailView: View {
             }
 
             Section("Breakdown") {
-                if rows.isEmpty {
-                    ContentUnavailableView("No Breakdown", systemImage: "list.bullet.rectangle")
+                let visibleRows = rows.filter { $0.value != 0 || !transactions.isEmpty }
+                if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: rows, transactions: transactions) {
+                    ContentUnavailableView("No data to show for this filter yet.", systemImage: "list.bullet.rectangle")
                 } else {
-                    ForEach(rows) { row in
+                    ForEach(visibleRows) { row in
                         LabeledContent(row.title) {
                             Text(formatter.string(for: row.value))
                                 .moneyEffortLookup(amount: abs(row.value), formatter: formatter)
@@ -309,6 +310,7 @@ struct ReportDetailChart: View {
     let kind: ReportChartKind
     let buckets: [MoneyBucket]
     let rows: [ReportBreakdownRow]
+    let transactions: [ReportTransactionReference]
     let formatter: CurrencyFormatter
 
     var body: some View {
@@ -320,7 +322,7 @@ struct ReportDetailChart: View {
         case .expenseTrend:
             ExpenseTrendChart(buckets: buckets, formatter: formatter)
         case .comparison:
-            ComparisonChart(rows: rows, formatter: formatter)
+            ComparisonChart(rows: rows, transactions: transactions, formatter: formatter)
         case .allocation(let snapshot):
             AllocationDetailChart(snapshot: snapshot, formatter: formatter)
         case .balance:
@@ -334,8 +336,8 @@ struct SignedFlowChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart {
                 ForEach(buckets) { bucket in
@@ -356,8 +358,8 @@ struct ExpenseTrendChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart(buckets) { bucket in
                 LineMark(x: .value("Period", bucket.label), y: .value("Expenses", NSDecimalNumber(decimal: bucket.expense).doubleValue))
@@ -374,8 +376,8 @@ struct BalanceTimelineChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart(buckets) { bucket in
                 LineMark(x: .value("Period", bucket.label), y: .value("Balance", NSDecimalNumber(decimal: bucket.balance).doubleValue))
@@ -389,11 +391,12 @@ struct BalanceTimelineChart: View {
 
 struct ComparisonChart: View {
     let rows: [ReportBreakdownRow]
+    let transactions: [ReportTransactionReference]
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if rows.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.bar.xaxis")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: [], rows: rows, transactions: transactions) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.bar.xaxis")
         } else {
             Chart(rows) { row in
                 BarMark(xStart: .value("Zero", 0), xEnd: .value("Value", NSDecimalNumber(decimal: row.value).doubleValue), y: .value("Name", row.title))
