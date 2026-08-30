@@ -23,34 +23,53 @@ struct MainTabView: View {
     }
 
     var body: some View {
+        tabContent
+            .canIMinimizeTabBarOnScroll()
+    }
+
+    private var tabContent: some View {
         TabView(selection: selectedTab) {
             NavigationStack {
                 HomeRootView()
             }
-                .tabItem {
-                    Label("Home", systemImage: "house")
-                }
-                .tag(MainTab.home)
+            .tabItem {
+                Label("Home", systemImage: "house")
+            }
+            .tag(MainTab.home)
+
             BudgetsRootView()
-                .tabItem {
-                    Label("Budgets", systemImage: "wallet.pass")
-                }
-                .tag(MainTab.budgets)
-                .accessibilityIdentifier("budgets-tab")
+            .tabItem {
+                Label("Budgets", systemImage: "wallet.pass")
+            }
+            .tag(MainTab.budgets)
+            .accessibilityIdentifier("budgets-tab")
+
             NavigationStack {
                 TransactionsRootView()
             }
-                .tabItem {
-                    Label("Transactions", systemImage: "list.bullet")
-                }
-                .tag(MainTab.transactions)
+            .tabItem {
+                Label("Transactions", systemImage: "list.bullet")
+            }
+            .tag(MainTab.transactions)
+
             NavigationStack {
                 SettingsRootView()
             }
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .tag(MainTab.settings)
+            .tabItem {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .tag(MainTab.settings)
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func canIMinimizeTabBarOnScroll() -> some View {
+        if #available(iOS 26.0, *) {
+            tabBarMinimizeBehavior(.onScrollDown)
+        } else {
+            self
         }
     }
 }

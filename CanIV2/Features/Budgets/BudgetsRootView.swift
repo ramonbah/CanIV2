@@ -15,6 +15,8 @@ struct BudgetsRootView: View {
     @State private var activePlanSheet: ActivePlanSheet?
     @State private var activeItemSheet: ActiveItemSheet?
     @State private var activeTransactionSheet: ActiveTransactionSheet?
+    @State private var activeRolloverSheet: ActiveRolloverSheet?
+    @State private var activeRecurringSheet: ActiveRecurringSheet?
     @State private var deletion: BudgetDeletion?
     @State private var planDeletion: PlanDeletion?
     @State private var itemDeletion: ItemDeletion?
@@ -29,60 +31,9 @@ struct BudgetsRootView: View {
     }
 
     var body: some View {
-        adaptiveContent
-        .task {
-            coordinator.refresh()
-            coordinator.synchronizeAdaptiveBudgetSelection()
-        }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .create:
-                BudgetFormView(mode: .create, existingBudget: nil, onSave: saveBudget)
-            case .edit(let budget):
-                BudgetFormView(mode: .edit, existingBudget: budget, onSave: saveBudget)
-            }
-        }
-        .sheet(item: $activePlanSheet) { sheet in
-            switch sheet {
-            case .create(let budget):
-                PlanFormView(mode: .create, plan: nil, budget: budget, formatter: coordinator.formatter, onSave: savePlan)
-            case .edit(let plan):
-                PlanFormView(mode: .edit, plan: plan, budget: plan.budget, formatter: coordinator.formatter, onSave: savePlan)
-            }
-        }
-        .sheet(item: $activeItemSheet) { sheet in
-            switch sheet {
-            case .create(let plan):
-                ItemFormView(mode: .create, item: nil, plan: plan, formatter: coordinator.formatter, onSave: saveItem)
-            case .edit(let item):
-                ItemFormView(mode: .edit, item: item, plan: item.budgetPlan, formatter: coordinator.formatter, onSave: saveItem)
-            }
-        }
-        .sheet(item: $activeTransactionSheet) { sheet in
-            switch sheet {
-            case .create(let plan, let destination):
-                TransactionFormView(plan: plan, transactionSheet: .create(destination: destination), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { transaction, movedItem in
-                    activeTransactionSheet = nil
-                    if let movedItem {
-                        coordinator.navigationSelection.selectPlan(plan.id)
-                        coordinator.navigationSelection.selectItem(movedItem.id)
-                    } else if let transaction {
-                        coordinator.navigationSelection.selectPlan(plan.id)
-                        coordinator.navigationSelection.selectItem(transaction.budgetItem.id)
-                    }
-                }
-            case .edit(let transaction):
-                TransactionFormView(plan: transaction.budgetItem.budgetPlan, transactionSheet: .edit(transaction), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { _, movedItem in
-                    activeTransactionSheet = nil
-                    if let movedItem {
-                        coordinator.navigationSelection.selectPlan(movedItem.budgetPlan.id)
-                        coordinator.navigationSelection.selectItem(movedItem.id)
-                    }
-                }
-            }
-        }
+        contentWithSheets
         .confirmationDialog(
-            deletion.map { "Delete \"\($0.budget.name)\"?" } ?? "Delete Budget?",
+            "Delete Budget?",
             isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
             titleVisibility: .visible,
             presenting: deletion
@@ -94,13 +45,13 @@ struct BudgetsRootView: View {
         } message: { deletion in
             Text(deletion.impact.budgetMessage)
         }
-        .confirmationDialog(planDeletion.map { "Delete \"\($0.plan.name)\"?" } ?? "Delete Plan?", isPresented: Binding(get: { planDeletion != nil }, set: { if !$0 { planDeletion = nil } }), titleVisibility: .visible, presenting: planDeletion) { deletion in
+        .confirmationDialog("Delete Plan?", isPresented: Binding(get: { planDeletion != nil }, set: { if !$0 { planDeletion = nil } }), titleVisibility: .visible, presenting: planDeletion) { deletion in
             Button("Delete \"\(deletion.plan.name)\"", role: .destructive) { deletePlan(deletion.plan) }
             Button("Cancel") { planDeletion = nil }
         } message: { deletion in
             Text(deletion.impact.planMessage)
         }
-        .confirmationDialog(itemDeletion.map { "Delete \"\($0.itemName)\"?" } ?? "Delete Item?", isPresented: Binding(get: { itemDeletion != nil }, set: { if !$0 { itemDeletion = nil } }), titleVisibility: .visible, presenting: itemDeletion) { deletion in
+        .confirmationDialog("Delete Item?", isPresented: Binding(get: { itemDeletion != nil }, set: { if !$0 { itemDeletion = nil } }), titleVisibility: .visible, presenting: itemDeletion) { deletion in
             Button("Delete \"\(deletion.itemName)\"", role: .destructive) { deleteItem(id: deletion.itemID, fallbackPlanID: deletion.planID) }
             Button("Cancel") { itemDeletion = nil }
         } message: { deletion in
@@ -119,6 +70,41 @@ struct BudgetsRootView: View {
         }
     }
 
+    private var contentWithSheets: some View {
+        adaptiveContent
+        .task {
+            coordinator.refresh()
+            coordinator.synchronizeAdaptiveBudgetSelection()
+        }
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .create:
+                BudgetFormView(mode: .create, existingBudget: nil, onSave: saveBudget)
+            case .edit(let budget):
+                BudgetFormView(mode: .edit, existingBudget: budget, onSave: saveBudget)
+            }
+        }
+        .sheet(item: $activePlanSheet) { sheet in
+            planSheetContent(for: sheet)
+        }
+        .sheet(item: $activeItemSheet) { sheet in
+            itemSheetContent(for: sheet)
+        }
+        .sheet(item: $activeTransactionSheet) { sheet in
+            transactionSheetContent(for: sheet)
+        }
+        .sheet(item: $activeRolloverSheet) { sheet in
+            RolloverSheetView(destinationPlan: sheet.destinationPlan, formatter: coordinator.formatter) {
+                activeRolloverSheet = nil
+            }
+        }
+        .sheet(item: $activeRecurringSheet) { sheet in
+            RecurringTemplateFormView(sheet: sheet, formatter: coordinator.formatter) {
+                activeRecurringSheet = nil
+            }
+        }
+    }
+
     @ViewBuilder
     private var adaptiveContent: some View {
         GeometryReader { proxy in
@@ -128,6 +114,8 @@ struct BudgetsRootView: View {
                     activePlanSheet: $activePlanSheet,
                     activeItemSheet: $activeItemSheet,
                     activeTransactionSheet: $activeTransactionSheet,
+                    activeRolloverSheet: $activeRolloverSheet,
+                    activeRecurringSheet: $activeRecurringSheet,
                     deletion: $deletion,
                     planDeletion: $planDeletion,
                     itemDeletion: $itemDeletion,
@@ -140,6 +128,8 @@ struct BudgetsRootView: View {
                         activePlanSheet: $activePlanSheet,
                         activeItemSheet: $activeItemSheet,
                         activeTransactionSheet: $activeTransactionSheet,
+                        activeRolloverSheet: $activeRolloverSheet,
+                        activeRecurringSheet: $activeRecurringSheet,
                         deletion: $deletion,
                         planDeletion: $planDeletion,
                         itemDeletion: $itemDeletion,
@@ -173,6 +163,7 @@ struct BudgetsRootView: View {
                     onEditPlan: { activePlanSheet = .edit(plan) },
                     onDeletePlan: { planDeletion = PlanDeletion(plan: plan, impact: coordinator.planDeletionImpact(for: plan)) },
                     onCreateItem: { activeItemSheet = .create(plan) },
+                    onRolloverItems: { activeRolloverSheet = .rollover(destination: plan) },
                     onEditItem: { activeItemSheet = .edit($0) },
                     onDeleteItem: { itemDeletion = ItemDeletion(item: $0, impact: coordinator.itemDeletionImpact(for: $0)) },
                     onCreateTransaction: { activeTransactionSheet = .create(plan: plan, destination: $0) }
@@ -303,6 +294,59 @@ struct BudgetsRootView: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    @ViewBuilder
+    private func planSheetContent(for sheet: ActivePlanSheet) -> some View {
+        switch sheet {
+        case .create(let budget):
+            PlanFormView(mode: .create, plan: nil, budget: budget, formatter: coordinator.formatter, onSave: savePlan)
+        case .edit(let plan):
+            PlanFormView(mode: .edit, plan: plan, budget: plan.budget, formatter: coordinator.formatter, onSave: savePlan)
+        }
+    }
+
+    @ViewBuilder
+    private func itemSheetContent(for sheet: ActiveItemSheet) -> some View {
+        switch sheet {
+        case .create(let plan):
+            ItemFormView(mode: .create, item: nil, plan: plan, formatter: coordinator.formatter, onSave: saveItem)
+        case .edit(let item):
+            ItemFormView(mode: .edit, item: item, plan: item.budgetPlan, formatter: coordinator.formatter, onSave: saveItem)
+        }
+    }
+
+    @ViewBuilder
+    private func transactionSheetContent(for sheet: ActiveTransactionSheet) -> some View {
+        switch sheet {
+        case .create(let plan, let destination):
+            TransactionFormView(plan: plan, transactionSheet: .create(destination: destination), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { transaction, movedItem in
+                completeCreatedTransaction(plan: plan, transaction: transaction, movedItem: movedItem)
+            }
+        case .edit(let transaction):
+            TransactionFormView(plan: transaction.budgetItem.budgetPlan, transactionSheet: .edit(transaction), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { _, movedItem in
+                completeEditedTransaction(movedItem: movedItem)
+            }
+        }
+    }
+
+    private func completeCreatedTransaction(plan: BudgetPlan, transaction: Transaction?, movedItem: BudgetItem?) {
+        activeTransactionSheet = nil
+        if let movedItem {
+            coordinator.navigationSelection.selectPlan(plan.id)
+            coordinator.navigationSelection.selectItem(movedItem.id)
+        } else if let transaction, let item = transaction.budgetItem {
+            coordinator.navigationSelection.selectPlan(plan.id)
+            coordinator.navigationSelection.selectItem(item.id)
+        }
+    }
+
+    private func completeEditedTransaction(movedItem: BudgetItem?) {
+        activeTransactionSheet = nil
+        if let movedItem, let plan = movedItem.budgetPlan {
+            coordinator.navigationSelection.selectPlan(plan.id)
+            coordinator.navigationSelection.selectItem(movedItem.id)
+        }
+    }
 }
 
 private enum BudgetNavigationRoute: Hashable {
@@ -388,6 +432,8 @@ private struct BudgetSplitRootView: View {
     @Binding var activePlanSheet: ActivePlanSheet?
     @Binding var activeItemSheet: ActiveItemSheet?
     @Binding var activeTransactionSheet: ActiveTransactionSheet?
+    @Binding var activeRolloverSheet: ActiveRolloverSheet?
+    @Binding var activeRecurringSheet: ActiveRecurringSheet?
     @Binding var deletion: BudgetDeletion?
     @Binding var planDeletion: PlanDeletion?
     @Binding var itemDeletion: ItemDeletion?
@@ -438,6 +484,8 @@ private struct BudgetSplitRootView: View {
                             onEditBudget: { activeSheet = .edit(selectedBudget) },
                             onDeleteBudget: { deletion = BudgetDeletion(budget: selectedBudget, impact: coordinator.budgetDeletionImpact(for: selectedBudget)) },
                             onCreatePlan: { activePlanSheet = .create(selectedBudget) },
+                            onCreateRecurringTemplate: { activeRecurringSheet = .create(selectedBudget) },
+                            onEditRecurringTemplate: { activeRecurringSheet = .edit($0) },
                             onEditPlan: { activePlanSheet = .edit($0) },
                             onDeletePlan: { planDeletion = PlanDeletion(plan: $0, impact: coordinator.planDeletionImpact(for: $0)) }
                         )
@@ -509,6 +557,7 @@ private struct BudgetSplitRootView: View {
                     onEditPlan: { activePlanSheet = .edit(plan) },
                     onDeletePlan: { planDeletion = PlanDeletion(plan: plan, impact: coordinator.planDeletionImpact(for: plan)) },
                     onCreateItem: { activeItemSheet = .create(plan) },
+                    onRolloverItems: { activeRolloverSheet = .rollover(destination: plan) },
                     onEditItem: { activeItemSheet = .edit($0) },
                     onDeleteItem: { itemDeletion = ItemDeletion(item: $0, impact: coordinator.itemDeletionImpact(for: $0)) },
                     onCreateTransaction: { activeTransactionSheet = .create(plan: plan, destination: $0) }
@@ -554,6 +603,8 @@ private struct CompactBudgetsRootView: View {
     @Binding var activePlanSheet: ActivePlanSheet?
     @Binding var activeItemSheet: ActiveItemSheet?
     @Binding var activeTransactionSheet: ActiveTransactionSheet?
+    @Binding var activeRolloverSheet: ActiveRolloverSheet?
+    @Binding var activeRecurringSheet: ActiveRecurringSheet?
     @Binding var deletion: BudgetDeletion?
     @Binding var planDeletion: PlanDeletion?
     @Binding var itemDeletion: ItemDeletion?
@@ -579,6 +630,8 @@ private struct CompactBudgetsRootView: View {
                             onEdit: { activeSheet = .edit(budget) },
                             onDelete: { deletion = BudgetDeletion(budget: budget, impact: coordinator.budgetDeletionImpact(for: budget)) },
                             onCreatePlan: { activePlanSheet = .create(budget) },
+                            onCreateRecurringTemplate: { activeRecurringSheet = .create(budget) },
+                            onEditRecurringTemplate: { activeRecurringSheet = .edit($0) },
                             onEditPlan: { activePlanSheet = .edit($0) },
                             onDeletePlan: { planDeletion = PlanDeletion(plan: $0, impact: coordinator.planDeletionImpact(for: $0)) }
                         )
@@ -667,6 +720,34 @@ private enum ActiveTransactionSheet: Identifiable {
     }
 }
 
+private enum ActiveRolloverSheet: Identifiable {
+    case rollover(destination: BudgetPlan)
+
+    var destinationPlan: BudgetPlan {
+        switch self {
+        case .rollover(let plan): plan
+        }
+    }
+
+    var id: String {
+        switch self {
+        case .rollover(let plan): "rollover-\(plan.id)"
+        }
+    }
+}
+
+private enum ActiveRecurringSheet: Identifiable {
+    case create(Budget)
+    case edit(RecurringTransactionTemplate)
+
+    var id: String {
+        switch self {
+        case .create(let budget): "create-recurring-\(budget.id)"
+        case .edit(let template): "edit-recurring-\(template.id)"
+        }
+    }
+}
+
 private struct BudgetDeletion: Identifiable {
     var id: UUID { budget.id }
     let budget: Budget
@@ -681,6 +762,8 @@ private struct BudgetAccordionRow: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onCreatePlan: () -> Void
+    let onCreateRecurringTemplate: () -> Void
+    let onEditRecurringTemplate: (RecurringTransactionTemplate) -> Void
     let onEditPlan: (BudgetPlan) -> Void
     let onDeletePlan: (BudgetPlan) -> Void
 
@@ -710,7 +793,7 @@ private struct BudgetAccordionRow: View {
             }
 
             if isExpanded {
-                BudgetExpandedView(budget: budget, formatter: formatter, onEditBudget: onEdit, onDeleteBudget: onDelete, onCreatePlan: onCreatePlan, onEditPlan: onEditPlan, onDeletePlan: onDeletePlan)
+                BudgetExpandedView(budget: budget, formatter: formatter, onEditBudget: onEdit, onDeleteBudget: onDelete, onCreatePlan: onCreatePlan, onCreateRecurringTemplate: onCreateRecurringTemplate, onEditRecurringTemplate: onEditRecurringTemplate, onEditPlan: onEditPlan, onDeletePlan: onDeletePlan)
             }
         }
     }
@@ -723,6 +806,8 @@ private struct BudgetExpandedView: View {
     let onEditBudget: () -> Void
     let onDeleteBudget: () -> Void
     let onCreatePlan: () -> Void
+    let onCreateRecurringTemplate: () -> Void
+    let onEditRecurringTemplate: (RecurringTransactionTemplate) -> Void
     let onEditPlan: (BudgetPlan) -> Void
     let onDeletePlan: (BudgetPlan) -> Void
 
@@ -743,11 +828,8 @@ private struct BudgetExpandedView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(budget.name).font(.title3.bold())
-                    TotalsGrid(rows: [
-                        ("Funds", formatter.string(for: totals.totalFundsReceived)),
-                        ("Spending", formatter.string(for: totals.expenses)),
-                        ("Balance", formatter.string(for: totals.currentBalance))
-                    ], amounts: [
+                    let rows = budgetRows(for: totals)
+                    TotalsGrid(rows: rows, amounts: [
                         "Funds": totals.totalFundsReceived,
                         "Spending": totals.expenses,
                         "Balance": totals.currentBalance
@@ -807,6 +889,13 @@ private struct BudgetExpandedView: View {
                 .onTapGesture { coordinator.openBudgetReports(for: budget) }
                 .accessibilityIdentifier("budget-reports-button")
             }
+
+            RecurringTemplatesSection(
+                budget: budget,
+                formatter: formatter,
+                onCreate: onCreateRecurringTemplate,
+                onEdit: onEditRecurringTemplate
+            )
         }
         .padding(.vertical, 8)
         .environment(\.editMode, $editMode)
@@ -828,6 +917,17 @@ private struct BudgetExpandedView: View {
         .alert("Couldn’t Save", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
+    }
+
+    private func budgetRows(for totals: BudgetTotals) -> [(String, String)] {
+        var rows = [("Funds", formatter.string(for: totals.totalFundsReceived))]
+        if totals.expenses != 0 {
+            rows.append(("Spending", formatter.string(for: totals.expenses)))
+        }
+        if totals.currentBalance != totals.totalFundsReceived || totals.expenses != 0 {
+            rows.append(("Balance", formatter.string(for: totals.currentBalance)))
+        }
+        return rows
     }
 
     @ViewBuilder private var planRows: some View {
@@ -892,6 +992,8 @@ private struct BudgetPlanListView: View {
     let onEditBudget: () -> Void
     let onDeleteBudget: () -> Void
     let onCreatePlan: () -> Void
+    let onCreateRecurringTemplate: () -> Void
+    let onEditRecurringTemplate: (RecurringTransactionTemplate) -> Void
     let onEditPlan: (BudgetPlan) -> Void
     let onDeletePlan: (BudgetPlan) -> Void
 
@@ -954,6 +1056,15 @@ private struct BudgetPlanListView: View {
                     .onTapGesture { coordinator.openBudgetReports(for: budget) }
                     .accessibilityIdentifier("budget-reports-button")
                 }
+            }
+
+            Section("Recurring") {
+                RecurringTemplatesSection(
+                    budget: budget,
+                    formatter: formatter,
+                    onCreate: onCreateRecurringTemplate,
+                    onEdit: onEditRecurringTemplate
+                )
             }
         }
         .environment(\.editMode, $editMode)
@@ -1060,7 +1171,7 @@ private struct BudgetReportsScreen: View {
                     ReportDetailView(title: "Plan Net Flow", rangeTitle: coordinator.reportRangeDescription(snapshot.range), summary: snapshot.summary, chartKind: .comparison, buckets: snapshot.flowBuckets, rows: snapshot.planComparisons, transactions: snapshot.transactions, formatter: formatter)
                 } label: {
                     ReportCard(title: "Plan Net Flow", summary: snapshot.summary) {
-                        DivergingRows(rows: snapshot.planComparisons, formatter: formatter)
+                        DivergingRows(rows: snapshot.planComparisons, transactions: snapshot.transactions, formatter: formatter)
                     }
                 }
                 .accessibilityIdentifier("budget-report-card-plan-net-flow")
@@ -1080,9 +1191,176 @@ private struct BudgetReportsScreen: View {
                     }
                 }
                 .accessibilityIdentifier("budget-report-card-income-expense")
+
+                let recurring = coordinator.recurringReportSnapshot(for: budget)
+                NavigationLink {
+                    RecurringReportDetailView(snapshot: recurring, formatter: formatter)
+                } label: {
+                    ReportCard(title: "Recurring Templates", summary: recurring.summary) {
+                        RecurringReportRows(rows: recurring.rows, formatter: formatter)
+                    }
+                }
+                .accessibilityIdentifier("budget-report-card-recurring")
             }
         }
         .navigationTitle("Budget Reports")
+    }
+}
+
+private struct RecurringReportDetailView: View {
+    let snapshot: RecurringBudgetReportSnapshot
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        List {
+            Section("Summary") {
+                Text(snapshot.summary)
+            }
+            Section("Templates") {
+                RecurringReportRows(rows: snapshot.rows, formatter: formatter)
+            }
+            Section("Actual Transactions") {
+                Text("Projected recurring entries are not counted as income or spending until transactions are generated.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Recurring Report")
+    }
+}
+
+private struct RecurringReportRows: View {
+    let rows: [RecurringTemplateReportRow]
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        if rows.isEmpty {
+            ContentUnavailableView("No Recurring Templates", systemImage: "repeat")
+        } else {
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(row.name)
+                            .font(.headline)
+                        Spacer()
+                        Text(row.status.title)
+                            .font(.caption)
+                            .foregroundStyle(row.status == .needsDestination ? .orange : .secondary)
+                    }
+                    Text("\(row.kind == .income ? "Income" : "Expense") \(formatter.string(for: row.amount)) every \(row.interval == 1 ? "" : "\(row.interval) ")\(row.frequency.rawValue)")
+                        .font(.subheadline)
+                    if let destinationName = row.destinationName {
+                        Text("Destination: \(destinationName)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let nextOccurrence = row.nextOccurrence {
+                        Text("Next: \(nextOccurrence.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(row.name), \(row.status.title), \(row.kind == .income ? "income" : "expense") \(formatter.string(for: row.amount))")
+            }
+        }
+    }
+}
+
+private struct RecurringTemplatesSection: View {
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let budget: Budget
+    let formatter: CurrencyFormatter
+    let onCreate: () -> Void
+    let onEdit: (RecurringTransactionTemplate) -> Void
+    @State private var deletion: RecurringTransactionTemplate?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Recurring", systemImage: "repeat")
+                    .font(.headline)
+                Spacer()
+                Button("Add Template", action: onCreate)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("add-recurring-template")
+            }
+            if budget.recurringTemplates.isEmpty {
+                Text("No recurring templates")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(budget.recurringTemplates.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { template in
+                    RecurringTemplateRow(template: template, formatter: formatter)
+                        .contextMenu {
+                            Button("Edit") { onEdit(template) }
+                            Button(template.isEnabled ? "Pause" : "Resume") {
+                                setEnabled(!template.isEnabled, for: template)
+                            }
+                            Button("Delete", role: .destructive) { deletion = template }
+                        }
+                        .accessibilityAction(named: template.isEnabled ? "Pause" : "Resume") {
+                            setEnabled(!template.isEnabled, for: template)
+                        }
+                }
+            }
+        }
+        .confirmationDialog("Delete recurring template?", isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), titleVisibility: .visible, presenting: deletion) { template in
+            Button("Delete \"\(template.name)\"", role: .destructive) {
+                do {
+                    try coordinator.deleteRecurringTemplate(template)
+                    deletion = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+            }
+            Button("Cancel", role: .cancel) { deletion = nil }
+        } message: { template in
+            Text("Generated transactions are preserved. Future occurrences stop for \"\(template.name)\".")
+        }
+        .alert("Couldn’t Update Template", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private func setEnabled(_ enabled: Bool, for template: RecurringTransactionTemplate) {
+        do {
+            try coordinator.setRecurringTemplateEnabled(template, enabled: enabled)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct RecurringTemplateRow: View {
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let template: RecurringTransactionTemplate
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        let status = coordinator.recurringStatus(for: template)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(template.name)
+                    .font(.subheadline.bold())
+                Spacer()
+                Text(status.title)
+                    .font(.caption)
+                    .foregroundStyle(status == .needsDestination ? .orange : .secondary)
+            }
+            Text("\(template.kind == .income ? "Income" : "Expense") \(formatter.string(for: template.amount))")
+                .font(.subheadline)
+                .moneyEffortLookup(amount: template.amount, formatter: formatter)
+            Text(template.destinationBudgetItem.map { "Destination: \($0.name)" } ?? "Needs destination repair")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("recurring-template-\(template.name)")
     }
 }
 
@@ -1125,7 +1403,7 @@ private struct PlanReportsScreen: View {
                     ReportDetailView(title: "Item Net Flow", rangeTitle: coordinator.reportRangeDescription(snapshot.range), summary: snapshot.summary, chartKind: .comparison, buckets: snapshot.timelineBuckets, rows: snapshot.itemComparisons, transactions: snapshot.transactions, formatter: formatter)
                 } label: {
                     ReportCard(title: "Item Net Flow", summary: snapshot.summary) {
-                        DivergingRows(rows: snapshot.itemComparisons, formatter: formatter)
+                        DivergingRows(rows: snapshot.itemComparisons, transactions: snapshot.transactions, formatter: formatter)
                     }
                 }
                 .accessibilityIdentifier("plan-report-card-item-net-flow")
@@ -1149,13 +1427,14 @@ private struct PlanReportsScreen: View {
 
 private struct DivergingRows: View {
     let rows: [ReportBreakdownRow]
+    let transactions: [ReportTransactionReference]
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if rows.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.bar.xaxis", description: Text("No contributing transactions in this period."))
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: [], rows: rows, transactions: transactions) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.bar.xaxis")
         } else {
-            ComparisonChart(rows: rows, formatter: formatter)
+            ComparisonChart(rows: rows, transactions: transactions, formatter: formatter)
                 .frame(minHeight: 120)
         }
     }
@@ -1166,8 +1445,8 @@ private struct ExpenseChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart(buckets) { bucket in
                 LineMark(x: .value("Period", bucket.label), y: .value("Expenses", NSDecimalNumber(decimal: bucket.expense).doubleValue))
@@ -1184,8 +1463,8 @@ private struct BalanceChart: View {
     let formatter: CurrencyFormatter
 
     var body: some View {
-        if buckets.isEmpty {
-            ContentUnavailableView("No Activity", systemImage: "chart.xyaxis.line")
+        if !Phase4PresentationRules.reportHasMeaningfulData(buckets: buckets, rows: [], transactions: []) {
+            ContentUnavailableView("No data to show for this filter yet.", systemImage: "chart.xyaxis.line")
         } else {
             Chart(buckets) { bucket in
                 LineMark(x: .value("Period", bucket.label), y: .value("Balance", NSDecimalNumber(decimal: bucket.balance).doubleValue))
@@ -1233,6 +1512,7 @@ private struct PlanDetailView: View {
     let onEditPlan: () -> Void
     let onDeletePlan: () -> Void
     let onCreateItem: () -> Void
+    let onRolloverItems: () -> Void
     let onEditItem: (BudgetItem) -> Void
     let onDeleteItem: (BudgetItem) -> Void
     let onCreateTransaction: (BudgetItem?) -> Void
@@ -1249,17 +1529,13 @@ private struct PlanDetailView: View {
 
     var body: some View {
         let totals = coordinator.planTotals(for: plan)
+        let visibility = Phase4PresentationRules.planVisibility(for: plan, totals: totals)
         let visibleClassifications = coordinator.visibleItemClassifications(for: plan)
         let activeClassification = visibleClassifications.contains(selectedClassification) ? selectedClassification : visibleClassifications.first ?? .available
         let displayedItems = visibleClassifications.count <= 1 ? sortedItems : coordinator.sortedItems(for: plan, classification: activeClassification)
         List {
             Section {
-                TotalsGrid(rows: [
-                    ("Funds", formatter.string(for: totals.totalFundsReceived)),
-                    ("Planned", formatter.string(for: totals.planned)),
-                    ("Spent", formatter.string(for: totals.expenses)),
-                    ("Balance", formatter.string(for: totals.currentBalance))
-                ], amounts: [
+                TotalsGrid(rows: planRows(for: totals, visibility: visibility), amounts: [
                     "Funds": totals.totalFundsReceived,
                     "Planned": totals.planned,
                     "Spent": totals.expenses,
@@ -1270,7 +1546,9 @@ private struct PlanDetailView: View {
                     "Spent": coordinator.roundingDisclosure(components: plan.budgetItems.map { coordinator.itemTotals(for: $0).expenses }, total: totals.expenses),
                     "Balance": coordinator.roundingDisclosure(components: [totals.totalFundsReceived, -totals.expenses], total: totals.currentBalance)
                 ])
-                LabeledProgressView(progress: coordinator.progress(spent: totals.expenses, funds: totals.totalFundsReceived))
+                if visibility.showsProgress {
+                    LabeledProgressView(progress: coordinator.progress(spent: totals.expenses, funds: totals.totalFundsReceived))
+                }
             }
 
             Section {
@@ -1364,6 +1642,9 @@ private struct PlanDetailView: View {
                 Menu {
                     Button("Add Item", action: onCreateItem)
                         .accessibilityIdentifier("add-item")
+                    Button("Roll Over Items", action: onRolloverItems)
+                        .accessibilityIdentifier("rollover-items")
+                        .disabled(coordinator.rolloverSourcePlans(for: plan).isEmpty)
                     Button("Add Transaction") { onCreateTransaction(plan.budgetItems.first) }
                         .accessibilityIdentifier("add-transaction")
                         .disabled(plan.budgetItems.isEmpty)
@@ -1387,6 +1668,20 @@ private struct PlanDetailView: View {
             return selectedClassification
         }
         return [.available, .spent, .income].first { visibleClassifications.contains($0) } ?? .available
+    }
+
+    private func planRows(for totals: PlanTotals, visibility: PlanMetricVisibility) -> [(String, String)] {
+        var rows = [("Funds", formatter.string(for: totals.totalFundsReceived))]
+        if visibility.showsPlanned {
+            rows.append(("Planned", formatter.string(for: totals.planned)))
+        }
+        if visibility.showsSpent {
+            rows.append(("Spent", formatter.string(for: totals.expenses)))
+        }
+        if visibility.showsBalance {
+            rows.append(("Balance", formatter.string(for: totals.currentBalance)))
+        }
+        return rows
     }
 
     private var markAsSpentTitle: String {
@@ -1430,14 +1725,10 @@ private struct ItemDetailView: View {
 
     var body: some View {
         let totals = coordinator.itemTotals(for: item)
+        let visibility = Phase4PresentationRules.itemVisibility(for: item, totals: totals)
         List {
             Section {
-                TotalsGrid(rows: [
-                    ("Planned", formatter.string(for: totals.planned)),
-                    ("Income", formatter.string(for: totals.effectiveIncome)),
-                    ("Spent", formatter.string(for: totals.expenses)),
-                    ("Remaining", formatter.string(for: totals.remaining))
-                ], amounts: [
+                TotalsGrid(rows: itemRows(for: totals, visibility: visibility), amounts: [
                     "Planned": totals.planned,
                     "Income": totals.effectiveIncome,
                     "Spent": totals.expenses,
@@ -1452,7 +1743,9 @@ private struct ItemDetailView: View {
                     Label("Scheduled income: \(formatter.string(for: totals.scheduledIncome))", systemImage: "calendar.badge.clock")
                         .foregroundStyle(.secondary)
                 }
-                LabeledProgressView(progress: coordinator.progress(spent: totals.expenses, funds: max(totals.available, 0)))
+                if visibility.showsProgress {
+                    LabeledProgressView(progress: coordinator.progress(spent: totals.expenses, funds: max(totals.available, 0)))
+                }
             }
 
             if transactionSections.isEmpty {
@@ -1529,6 +1822,23 @@ private struct ItemDetailView: View {
         let amount = coordinator.markAsSpentPreview(for: item).amount
         return "Mark '\(item.name)' as spent? This creates an expense of \(formatter.string(for: amount)) dated today."
     }
+
+    private func itemRows(for totals: ItemTotals, visibility: ItemMetricVisibility) -> [(String, String)] {
+        var rows: [(String, String)] = []
+        if visibility.showsPlanned {
+            rows.append(("Planned", formatter.string(for: totals.planned)))
+        }
+        if visibility.showsIncome {
+            rows.append(("Income", formatter.string(for: totals.effectiveIncome)))
+        }
+        if visibility.showsSpent {
+            rows.append(("Spent", formatter.string(for: totals.expenses)))
+        }
+        if visibility.showsRemaining {
+            rows.append(("Remaining", formatter.string(for: totals.remaining)))
+        }
+        return rows
+    }
 }
 
 private enum TransactionSheet: Identifiable {
@@ -1546,6 +1856,284 @@ private enum TransactionSheet: Identifiable {
 private struct TransactionDeletion: Identifiable {
     var id: UUID { transaction.id }
     let transaction: Transaction
+}
+
+private struct RolloverSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let destinationPlan: BudgetPlan
+    let formatter: CurrencyFormatter
+    let onComplete: () -> Void
+    @State private var selectedSourcePlanID: UUID?
+    @State private var selectedItemIDs: Set<UUID> = []
+    @State private var errorMessage: String?
+
+    private var sourcePlans: [RolloverSourcePlan] {
+        coordinator.rolloverSourcePlans(for: destinationPlan)
+    }
+
+    private var selectedSourcePlan: BudgetPlan? {
+        guard let selectedSourcePlanID else { return nil }
+        return destinationPlan.budget.budgetPlans.first { $0.id == selectedSourcePlanID }
+    }
+
+    private var selectedSource: RolloverSourcePlan? {
+        sourcePlans.first { $0.planID == selectedSourcePlanID }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if sourcePlans.isEmpty {
+                    ContentUnavailableView("No Earlier Plans", systemImage: "rectangle.stack.badge.minus", description: Text("Create an earlier Plan in this Budget before rolling Items forward."))
+                } else {
+                    Section("Source Plan") {
+                        Picker("Source Plan", selection: Binding(get: { selectedSourcePlanID ?? sourcePlans.first?.planID }, set: { newValue in
+                            selectedSourcePlanID = newValue
+                            selectedItemIDs = []
+                        })) {
+                            ForEach(sourcePlans) { source in
+                                Text(source.name).tag(Optional(source.planID))
+                            }
+                        }
+                    }
+                    Section("Items") {
+                        ForEach(selectedSource?.candidates ?? []) { candidate in
+                            RolloverCandidateButton(
+                                candidate: candidate,
+                                isSelected: selectedItemIDs.contains(candidate.itemID),
+                                formatter: formatter
+                            ) {
+                                toggle(candidate)
+                            }
+                            .disabled(candidate.isAlreadyRolledOver || candidate.hasNameConflict)
+                            .accessibilityIdentifier("rollover-item-\(candidate.name)")
+                        }
+                    }
+                    if let errorMessage {
+                        Section {
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Roll Over Items")
+            .onAppear {
+                selectedSourcePlanID = selectedSourcePlanID ?? sourcePlans.first?.planID
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onComplete()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Roll Over", action: save)
+                        .disabled(selectedItemIDs.isEmpty)
+                        .accessibilityIdentifier("confirm-rollover")
+                }
+            }
+        }
+    }
+
+    private func toggle(_ candidate: RolloverCandidate) {
+        if selectedItemIDs.contains(candidate.itemID) {
+            selectedItemIDs.remove(candidate.itemID)
+        } else {
+            selectedItemIDs.insert(candidate.itemID)
+        }
+    }
+
+    private func save() {
+        guard let selectedSourcePlan else { return }
+        do {
+            try coordinator.rollItems(from: selectedSourcePlan, itemIDs: selectedItemIDs, into: destinationPlan)
+            onComplete()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct RolloverCandidateButton: View {
+    let candidate: RolloverCandidate
+    let isSelected: Bool
+    let formatter: CurrencyFormatter
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(candidate.name)
+                    Text("\(formatter.string(for: candidate.unitAmount)) x \(NSDecimalNumber(decimal: candidate.multiplier).stringValue)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                statusView
+            }
+            .frame(minHeight: 44)
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        if candidate.isAlreadyRolledOver {
+            Text("Already Rolled")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else if candidate.hasNameConflict {
+            Text("Name Conflict")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        } else if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color.accentColor)
+        }
+    }
+}
+
+private struct RecurringTemplateFormView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let sheet: ActiveRecurringSheet
+    let formatter: CurrencyFormatter
+    let onComplete: () -> Void
+
+    @State private var name: String
+    @State private var amount: String
+    @State private var kind: TransactionKind
+    @State private var frequency: RecurrenceFrequency
+    @State private var interval: String
+    @State private var startDate: Date
+    @State private var hasEndDate: Bool
+    @State private var endDate: Date
+    @State private var destinationID: UUID?
+    @State private var errorMessage: String?
+
+    private var template: RecurringTransactionTemplate? {
+        if case .edit(let template) = sheet { return template }
+        return nil
+    }
+
+    private var budget: Budget {
+        switch sheet {
+        case .create(let budget): budget
+        case .edit(let template): template.budget
+        }
+    }
+
+    private var destinationItems: [BudgetItem] {
+        budget.budgetPlans.flatMap(\.budgetItems).sorted {
+            if $0.budgetPlan.sortOrder != $1.budgetPlan.sortOrder { return $0.budgetPlan.sortOrder < $1.budgetPlan.sortOrder }
+            return $0.sortOrder < $1.sortOrder
+        }
+    }
+
+    init(sheet: ActiveRecurringSheet, formatter: CurrencyFormatter, onComplete: @escaping () -> Void) {
+        self.sheet = sheet
+        self.formatter = formatter
+        self.onComplete = onComplete
+        let template: RecurringTransactionTemplate?
+        switch sheet {
+        case .create:
+            template = nil
+        case .edit(let existing):
+            template = existing
+        }
+        _name = State(initialValue: template?.name ?? "")
+        _amount = State(initialValue: template.map { LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: $0.amount) } ?? "")
+        _kind = State(initialValue: template?.kind ?? .expense)
+        _frequency = State(initialValue: template?.frequency ?? .monthly)
+        _interval = State(initialValue: template.map { "\($0.interval)" } ?? "1")
+        _startDate = State(initialValue: template?.startDate ?? Date())
+        _hasEndDate = State(initialValue: template?.endDate != nil)
+        _endDate = State(initialValue: template?.endDate ?? Date())
+        _destinationID = State(initialValue: template?.destinationBudgetItem?.id)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Template") {
+                    TextField("Name", text: $name)
+                        .accessibilityIdentifier("recurring-template-name")
+                    Picker("Type", selection: $kind) {
+                        Text("Expense").tag(TransactionKind.expense)
+                        Text("Income").tag(TransactionKind.income)
+                    }
+                    .pickerStyle(.segmented)
+                    NumericTextField("Amount", text: $amount, kind: .decimal, locale: formatter.locale, error: Binding(get: { nil }, set: { _ in }))
+                        .keyboardType(.decimalPad)
+                        .accessibilityIdentifier("recurring-template-amount")
+                }
+                Section("Schedule") {
+                    Picker("Frequency", selection: $frequency) {
+                        ForEach(RecurrenceFrequency.allCases, id: \.self) { frequency in
+                            Text(frequency.rawValue.capitalized).tag(frequency)
+                        }
+                    }
+                    NumericTextField("Interval", text: $interval, kind: .wholeNumber, locale: formatter.locale, error: Binding(get: { nil }, set: { _ in }))
+                        .keyboardType(.numberPad)
+                        .accessibilityIdentifier("recurring-template-interval")
+                    DatePicker("Start Date", selection: $startDate, displayedComponents: .date)
+                    Toggle("End Date", isOn: $hasEndDate)
+                    if hasEndDate {
+                        DatePicker("Ends", selection: $endDate, displayedComponents: .date)
+                    }
+                }
+                Section("Destination") {
+                    if destinationItems.isEmpty {
+                        ContentUnavailableView("No Items", systemImage: "checklist", description: Text("Create an Item before assigning recurring transactions."))
+                    } else {
+                        Picker("Destination Item", selection: $destinationID) {
+                            Text("Needs Destination").tag(Optional<UUID>.none)
+                            ForEach(destinationItems) { item in
+                                Text("\(item.budgetPlan.name) / \(item.name)").tag(Optional(item.id))
+                            }
+                        }
+                    }
+                }
+                if let errorMessage {
+                    Section {
+                        Text(errorMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle(template == nil ? "New Recurring" : "Edit Recurring")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onComplete()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: save)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        let destination = destinationID.flatMap { id in destinationItems.first { $0.id == id } }
+        do {
+            if let template {
+                try coordinator.updateRecurringTemplate(template, name: name, amountText: amount, kind: kind, frequency: frequency, intervalText: interval, startDate: startDate, endDate: hasEndDate ? endDate : nil, destination: destination)
+            } else {
+                _ = try coordinator.createRecurringTemplate(name: name, amountText: amount, kind: kind, frequency: frequency, intervalText: interval, startDate: startDate, endDate: hasEndDate ? endDate : nil, budget: budget, destination: destination)
+            }
+            onComplete()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
 
 private enum TransactionDestinationMode: String, CaseIterable, Identifiable {
@@ -1984,18 +2572,25 @@ private struct PlanRowView: View {
 
     var body: some View {
         let totals = coordinator.planTotals(for: plan)
+        let visibility = Phase4PresentationRules.planVisibility(for: plan, totals: totals)
         let progress = coordinator.progress(spent: totals.expenses, funds: totals.totalFundsReceived)
         VStack(alignment: .leading, spacing: 8) {
             Text(plan.name).font(.headline)
-            ProgressView(value: progress.cappedFraction)
-                .tint(progress.isWarning ? .orange : .accentColor)
-            Text(progress.label)
-                .font(.subheadline)
-                .foregroundStyle(progress.isWarning ? .orange : .secondary)
+            if visibility.showsProgress {
+                ProgressView(value: progress.cappedFraction)
+                    .tint(progress.isWarning ? .orange : .accentColor)
+                Text(progress.label)
+                    .font(.subheadline)
+                    .foregroundStyle(progress.isWarning ? .orange : .secondary)
+            } else {
+                Text("Funds: \(formatter.string(for: totals.totalFundsReceived))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(plan.name), \(progress.label)")
+        .accessibilityLabel(visibility.showsProgress ? "\(plan.name), \(progress.label)" : "\(plan.name), funds \(formatter.string(for: totals.totalFundsReceived))")
     }
 }
 
@@ -2006,14 +2601,17 @@ private struct ItemRowView: View {
 
     var body: some View {
         let presentation = coordinator.itemRowPresentation(for: item)
+        let visibility = Phase4PresentationRules.itemRowVisibility(for: item, presentation: presentation)
         VStack(alignment: .leading, spacing: 8) {
             Text(item.name).font(.headline)
             switch presentation.style {
             case .income:
-                Text("Income: \(formatter.string(for: presentation.effectiveIncome))")
-                    .font(.subheadline)
-                    .foregroundStyle(.green)
-                    .moneyEffortLookup(amount: presentation.effectiveIncome, formatter: formatter)
+                if visibility.showsIncome {
+                    Text("Income: \(formatter.string(for: presentation.effectiveIncome))")
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                        .moneyEffortLookup(amount: presentation.effectiveIncome, formatter: formatter)
+                }
                 if presentation.scheduledIncome > 0 {
                     Text("Scheduled income: \(formatter.string(for: presentation.scheduledIncome))")
                         .font(.subheadline)
@@ -2038,20 +2636,28 @@ private struct ItemRowView: View {
                     .accessibilityIdentifier("item-row-overspent")
             case .available:
                 let progress = coordinator.progress(spent: presentation.spent, funds: max(presentation.planned + presentation.effectiveIncome, 0))
-                HStack {
-                    Text("Remaining: \(formatter.string(for: presentation.remaining))")
-                        .moneyEffortLookup(amount: abs(presentation.remaining), formatter: formatter)
-                    Spacer()
-                    Text("Planned: \(formatter.string(for: presentation.planned))")
-                        .foregroundStyle(.secondary)
-                        .moneyEffortLookup(amount: presentation.planned, formatter: formatter)
-                }
-                .font(.subheadline)
-                ProgressView(value: progress.cappedFraction)
-                    .tint(progress.isWarning ? .orange : .accentColor)
-                Text(progress.label)
+                if visibility.showsRemaining || visibility.showsPlanned {
+                    HStack {
+                        if visibility.showsRemaining {
+                            Text("Remaining: \(formatter.string(for: presentation.remaining))")
+                                .moneyEffortLookup(amount: abs(presentation.remaining), formatter: formatter)
+                        }
+                        Spacer()
+                        if visibility.showsPlanned {
+                            Text("Planned: \(formatter.string(for: presentation.planned))")
+                                .foregroundStyle(.secondary)
+                                .moneyEffortLookup(amount: presentation.planned, formatter: formatter)
+                        }
+                    }
                     .font(.subheadline)
-                    .foregroundStyle(progress.isWarning ? .orange : .secondary)
+                }
+                if visibility.showsProgress {
+                    ProgressView(value: progress.cappedFraction)
+                        .tint(progress.isWarning ? .orange : .accentColor)
+                    Text(progress.label)
+                        .font(.subheadline)
+                        .foregroundStyle(progress.isWarning ? .orange : .secondary)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -2062,13 +2668,31 @@ private struct ItemRowView: View {
     private func accessibilityLabel(for presentation: ItemRowPresentation) -> String {
         switch presentation.style {
         case .income:
-            return "\(item.name), income \(formatter.string(for: presentation.effectiveIncome)), scheduled income \(formatter.string(for: presentation.scheduledIncome))"
+            var parts = [item.name]
+            if presentation.effectiveIncome != 0 {
+                parts.append("income \(formatter.string(for: presentation.effectiveIncome))")
+            }
+            if presentation.scheduledIncome != 0 {
+                parts.append("scheduled income \(formatter.string(for: presentation.scheduledIncome))")
+            }
+            return parts.joined(separator: ", ")
         case .spent:
             return "\(item.name), spent \(formatter.string(for: presentation.spent))"
         case .overspent:
             return "\(item.name), spent \(formatter.string(for: presentation.spent)), overspent by \(formatter.string(for: presentation.overspent))"
         case .available:
-            return "\(item.name), planned \(formatter.string(for: presentation.planned)), spent \(formatter.string(for: presentation.spent)), remaining \(formatter.string(for: presentation.remaining))"
+            let visibility = Phase4PresentationRules.itemRowVisibility(for: item, presentation: presentation)
+            var parts = [item.name]
+            if visibility.showsPlanned {
+                parts.append("planned \(formatter.string(for: presentation.planned))")
+            }
+            if visibility.showsSpent {
+                parts.append("spent \(formatter.string(for: presentation.spent))")
+            }
+            if visibility.showsRemaining {
+                parts.append("remaining \(formatter.string(for: presentation.remaining))")
+            }
+            return parts.joined(separator: ", ")
         }
     }
 }

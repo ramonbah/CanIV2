@@ -117,6 +117,7 @@ private struct AppRootView: View {
             }
             .onAppear {
                 coordinator.startLocalDayRefreshLoop()
+                try? coordinator.processDueRecurringTransactions()
             }
             .onDisappear {
                 coordinator.stopLocalDayRefreshLoop()
@@ -149,6 +150,7 @@ private struct AppRootView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
                     coordinator.refreshIfLocalDayChanged()
+                    try? coordinator.processDueRecurringTransactions()
                     coordinator.refresh()
                 } else if newPhase == .background {
                     coordinator.hideSalary()

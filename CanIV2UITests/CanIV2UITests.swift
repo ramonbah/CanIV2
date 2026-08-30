@@ -72,6 +72,33 @@ final class CanIV2UITests: XCTestCase {
     }
 
     @MainActor
+    func testPhase4ZeroMetricsCollapseUntilSpendingExists() throws {
+        let app = launchManualHierarchyApp()
+
+        createManualBudgetAndPlan(in: app)
+        let planRow = button(identifier: "plan-row-August", in: app)
+        XCTAssertTrue(planRow.exists, app.debugDescription)
+        XCTAssertFalse(planRow.label.contains("0%"), app.debugDescription)
+        XCTAssertFalse(planRow.label.contains("Spent"), app.debugDescription)
+
+        openManualPlan(in: app)
+        createManualItem(named: "Meals", unitAmount: "25", in: app)
+        let itemRow = button(identifier: "item-row-Meals", in: app)
+        XCTAssertTrue(itemRow.exists, app.debugDescription)
+        XCTAssertFalse(itemRow.label.contains("0%"), app.debugDescription)
+        XCTAssertFalse(itemRow.label.contains("Spent"), app.debugDescription)
+        XCTAssertFalse(itemRow.label.contains("Remaining"), app.debugDescription)
+
+        openManualItem("Meals", in: app)
+        createManualTransaction(amount: "5", note: "Snack", in: app)
+        tapButton("BackButton", in: app)
+
+        let spentItemRow = button(identifier: "item-row-Meals", in: app)
+        XCTAssertTrue(spentItemRow.label.localizedCaseInsensitiveContains("spent"), app.debugDescription)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "%")).firstMatch.exists, app.debugDescription)
+    }
+
+    @MainActor
     func testManualHierarchyMovesTransactionToDifferentItem() throws {
         let app = launchManualHierarchyApp()
 
@@ -524,7 +551,7 @@ final class CanIV2UITests: XCTestCase {
         XCTAssertTrue(app.buttons["budgets-add-menu"].waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertEqual(visibleBudgetAddControlCount(in: app), 1)
         app.buttons["budgets-add-menu"].tap()
-        assertVisibleMenuActions(["Add Budget", "Add Plan"], in: app)
+        assertVisibleBudgetContextualActions(in: app)
         app.buttons.matching(NSPredicate(format: "label == 'Add Plan'")).firstMatch.tap()
         type("August", into: app.textFields["plan-name"], app: app)
         type("1000", into: app.textFields["plan-starting-amount"], app: app)
@@ -1245,6 +1272,29 @@ final class CanIV2UITests: XCTestCase {
                 .map(\.label)
         )
         XCTAssertEqual(actionLabels, Set(labels), app.debugDescription)
+    }
+
+    private func assertVisibleBudgetContextualActions(in app: XCUIApplication) {
+        let menuLabels = ["Add Budget", "Add Plan"]
+        for label in menuLabels {
+            let matches = app.buttons.matching(NSPredicate(format: "label == %@", label))
+                .allElementsBoundByIndex
+                .filter { $0.exists && !$0.frame.isEmpty && $0.frame.minX > 100 && $0.frame.maxY < 220 }
+            XCTAssertEqual(matches.count, 1, "Expected exactly one visible \(label) action. \(app.debugDescription)")
+            XCTAssertTrue(matches.first?.isEnabled == true, "Expected \(label) to be accessible and enabled. \(app.debugDescription)")
+        }
+        let menuActionLabels = app.buttons.matching(NSPredicate(format: "label IN %@", menuLabels))
+            .allElementsBoundByIndex
+            .filter { $0.exists && !$0.frame.isEmpty && $0.frame.minX > 100 && $0.frame.maxY < 220 }
+            .map(\.label)
+        XCTAssertEqual(menuActionLabels.sorted(), menuLabels.sorted(), app.debugDescription)
+
+        let templateActions = app.buttons.matching(identifier: "add-recurring-template")
+            .allElementsBoundByIndex
+            .filter { $0.exists && !$0.frame.isEmpty }
+        XCTAssertEqual(templateActions.count, 1, "Expected exactly one visible Add Template action. \(app.debugDescription)")
+        XCTAssertEqual(templateActions.first?.label, "Add Template")
+        XCTAssertTrue(templateActions.first?.isEnabled == true, "Expected Add Template to be accessible and enabled. \(app.debugDescription)")
     }
 
     private func type(_ text: String, into field: XCUIElement, app: XCUIApplication) {
