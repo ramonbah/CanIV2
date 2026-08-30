@@ -1048,6 +1048,11 @@ final class BudgetingCoordinator {
             let hotel = try ItemUseCase(repository: itemRepository).create(name: "Hotel Balance", unitAmount: 300, multiplier: 1, in: august, now: now)
             let reimbursement = try ItemUseCase(repository: itemRepository).create(name: "Client Reimbursement", unitAmount: 0, multiplier: 1, in: august, now: now)
 
+            let julyDate = clock.calendar.date(byAdding: .month, value: -1, to: now) ?? now.addingTimeInterval(-2_592_000)
+            let july = try PlanUseCase(repository: planRepository).create(name: "July Essentials", startingAmount: 1_100, in: household, now: julyDate)
+            _ = try ItemUseCase(repository: itemRepository).create(name: "Weekly groceries", unitAmount: 200, multiplier: 1, in: july, now: julyDate)
+            _ = try ItemUseCase(repository: itemRepository).create(name: "Utility reserve", unitAmount: 140, multiplier: 1, in: july, now: julyDate.addingTimeInterval(1))
+
             let travel = try BudgetUseCase(repository: budgetRepository).create(name: "City Break Budget", now: now.addingTimeInterval(-20))
             let weekend = try PlanUseCase(repository: planRepository).create(name: "Weekend Plan", startingAmount: 450, in: travel, now: now.addingTimeInterval(-20))
             let transit = try ItemUseCase(repository: itemRepository).create(name: "Transit Passes", unitAmount: 80, multiplier: 1, in: weekend, now: now.addingTimeInterval(-20))
@@ -1059,6 +1064,10 @@ final class BudgetingCoordinator {
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .expense, amount: 42, date: twoDaysAgo, notes: "Train tickets", item: transit, clock: FixedClock(now: now.addingTimeInterval(4), calendar: clock.calendar))
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .expense, amount: 58, date: fiveDaysAgo, notes: "Cafe lunch", item: meals, clock: FixedClock(now: now.addingTimeInterval(5), calendar: clock.calendar))
             _ = try TransactionUseCase(repository: transactionRepository).create(kind: .income, amount: 90, date: eightDaysAgo, notes: "Travel refund", item: transit, clock: FixedClock(now: now.addingTimeInterval(6), calendar: clock.calendar))
+
+            let nextWeek = clock.calendar.date(byAdding: .day, value: 7, to: now) ?? now.addingTimeInterval(604_800)
+            _ = try createRecurringTemplate(name: "Weekly groceries", amountText: "120", kind: .expense, frequency: .weekly, intervalText: "1", startDate: nextWeek, endDate: nil, budget: household, destination: groceries)
+            _ = try createRecurringTemplate(name: "Streaming renewal", amountText: "35", kind: .expense, frequency: .monthly, intervalText: "1", startDate: nextWeek, endDate: nil, budget: household, destination: nil)
 
             expandedBudgetID = household.id
             navigationSelection.selectBudget(household.id)
