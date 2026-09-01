@@ -72,6 +72,322 @@ final class CanIV2UITests: XCTestCase {
     }
 
     @MainActor
+    func testReceiptCaptureWholeReceiptCreatesAttachment() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        scrollToElement(app.textFields["receipt-merchant"], in: app)
+        XCTAssertTrue(app.textFields["receipt-merchant"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(app.textFields["receipt-merchant"].value as? String, "Kedai Makan Contoh")
+        XCTAssertTrue(app.textFields["receipt-total"].exists, app.debugDescription)
+        tapButton("Save", in: app)
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(created.label.localizedCaseInsensitiveContains("receipt"), created.label)
+    }
+
+    @MainActor
+    func testReceiptCaptureCancellationPersistsNothing() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        scrollToElement(app.textFields["receipt-merchant"], in: app)
+        XCTAssertTrue(app.textFields["receipt-merchant"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("Cancel", in: app)
+
+        XCTAssertFalse(button(containing: "Kedai Makan Contoh", in: app).waitForExistence(timeout: 2), app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptCameraDeniedState() throws {
+        let denied = launchReceiptApp(cameraDenied: true)
+        createManualBudgetPlanAndItems(in: denied)
+        openManualItem("Meals", in: denied)
+        tapButton("add-transaction", in: denied)
+        tapButton("receipt-add", in: denied)
+        tapButton("Camera", in: denied)
+        XCTAssertTrue(denied.staticTexts["receipt-error"].waitForExistence(timeout: 3), denied.debugDescription)
+        XCTAssertTrue(denied.buttons["receipt-open-settings"].exists, denied.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptCameraUnavailableState() throws {
+        let unavailable = launchReceiptApp(cameraUnavailable: true)
+        createManualBudgetPlanAndItems(in: unavailable)
+        openManualItem("Meals", in: unavailable)
+        tapButton("add-transaction", in: unavailable)
+        tapButton("receipt-add", in: unavailable)
+        tapButton("Camera", in: unavailable)
+        XCTAssertTrue(unavailable.staticTexts["receipt-error"].waitForExistence(timeout: 3), unavailable.debugDescription)
+        XCTAssertFalse(unavailable.buttons["receipt-open-settings"].exists, unavailable.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptSearchAndHasReceiptFilter() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        tapButton("Save", in: app)
+        XCTAssertTrue(button(containing: "Kedai Makan Contoh", in: app).waitForExistence(timeout: 5), app.debugDescription)
+
+        tapTab("Transactions", in: app)
+        let search = app.textFields["transactions-search"]
+        type("lemak", into: search, app: app)
+        XCTAssertTrue(button(containing: "Kedai Makan Contoh", in: app).waitForExistence(timeout: 5), app.debugDescription)
+
+        tapButton("Filters", in: app)
+        tapButton("Has Receipt", in: app)
+        tapButton("transactions-apply-filters", in: app)
+        XCTAssertTrue(button(containing: "Kedai Makan Contoh", in: app).exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptScanRecoverableError() throws {
+        let app = launchReceiptApp(scannerError: true)
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        tapButton("add-transaction", in: app)
+        tapButton("receipt-add", in: app)
+        tapButton("Camera", in: app)
+        app.swipeUp()
+        scrollToElement(app.buttons["receipt-scan"], in: app)
+        XCTAssertTrue(app.buttons["receipt-scan"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("receipt-scan", in: app)
+        XCTAssertTrue(app.staticTexts["receipt-error"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptPartialRecognitionShowsReviewableRows() throws {
+        let app = launchReceiptApp(partialScanner: true)
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        tapButton("add-transaction", in: app)
+        tapButton("receipt-add", in: app)
+        tapButton("Camera", in: app)
+        app.swipeUp()
+        scrollToElement(app.buttons["receipt-scan"], in: app)
+        tapButton("receipt-scan", in: app)
+        scrollToElement(app.staticTexts["receipt-recognition-status"], in: app)
+        XCTAssertTrue(app.staticTexts["receipt-recognition-status"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["receipt-recognition-status"].label.localizedCaseInsensitiveContains("partial"), app.debugDescription)
+        let lineNamePredicate = NSPredicate(format: "identifier BEGINSWITH %@", "receipt-line-name-")
+        XCTAssertTrue(app.textFields.matching(lineNamePredicate).firstMatch.exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptSelectedItemsSubtotal() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        scrollToElement(app.buttons["Selected Items"], in: app)
+        tapButton("Selected Items", in: app)
+        let subtotal = app.staticTexts["receipt-selected-subtotal"]
+        XCTAssertTrue(subtotal.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(subtotal.label.contains("11.70"), subtotal.label)
+        tapButton("Save", in: app)
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(created.label.contains("11.70"), created.label)
+    }
+
+    @MainActor
+    func testReceiptFilesPDFImportUsesPageSelection() throws {
+        let app = launchReceiptApp(fakeFileImport: "pdf")
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        tapButton("add-transaction", in: app)
+        tapButton("receipt-add", in: app)
+        tapButton("Files", in: app)
+        XCTAssertTrue(app.buttons["Page 1"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.buttons["Page 2"].exists, app.debugDescription)
+        tapButton("Page 2", in: app)
+        XCTAssertTrue(app.buttons["receipt-scan"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("receipt-scan", in: app)
+        scrollToElement(app.textFields["receipt-merchant"], in: app)
+        XCTAssertTrue(app.textFields["receipt-merchant"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("Save", in: app)
+
+        XCTAssertTrue(button(containing: "Kedai Makan Contoh", in: app).waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testSavedReceiptCanBeViewedAndRemoved() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        scrollToElement(app.textFields["receipt-merchant"], in: app)
+        tapButton("Save", in: app)
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        created.swipeLeft()
+        tapButton("Edit", in: app)
+        XCTAssertTrue(app.staticTexts["receipt-saved-summary"].waitForExistence(timeout: 5), app.debugDescription)
+        scrollToElement(app.buttons["receipt-remove"], in: app)
+        tapButton("receipt-remove", in: app)
+        tapButton("Remove Receipt", in: app)
+        tapButton("Save", in: app)
+
+        let updated = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(updated.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(updated.label.localizedCaseInsensitiveContains("receipt attached"), updated.label)
+    }
+
+    @MainActor
+    func testSavedReceiptShowsIncludedExcludedAndChargesSections() throws {
+        let app = launchSavedReceiptApp()
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        created.swipeLeft()
+        tapButton("Edit", in: app)
+
+        scrollToElement(app.staticTexts["Included Items"], in: app)
+        XCTAssertTrue(app.staticTexts["Included Items"].waitForExistence(timeout: 5), app.debugDescription)
+        scrollToElement(app.staticTexts["Excluded Items"], in: app)
+        XCTAssertTrue(app.staticTexts["Excluded Items"].exists, app.debugDescription)
+        scrollToElement(app.staticTexts["Charges and Tips"], in: app)
+        XCTAssertTrue(app.staticTexts["Charges and Tips"].exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts["saved-receipt-included-line-total"].exists, app.debugDescription)
+        XCTAssertFalse(app.staticTexts["saved-receipt-amount-difference"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testSavedReceiptEditLineUsesExplicitAmountChoices() throws {
+        let app = launchSavedReceiptApp()
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        created.swipeLeft()
+        tapButton("Edit", in: app)
+        scrollToElement(app.buttons["receipt-edit-details"], in: app)
+        tapButton("receipt-edit-details", in: app, timeout: 5)
+
+        let lineAmount = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "saved-receipt-line-amount-")).firstMatch
+        replaceText(in: lineAmount, with: "9.00", app: app)
+        let proposed = app.textFields["saved-receipt-proposed-transaction-amount"]
+        scrollToElement(proposed, in: app)
+        XCTAssertTrue(proposed.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(["12.3", "12.30"].contains(proposed.value as? String ?? ""), app.debugDescription)
+        tapButton("Save", in: app)
+        tapButton("Keep Current Transaction Amount", in: app, timeout: 5)
+        XCTAssertTrue(app.staticTexts["saved-receipt-transaction-amount"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["saved-receipt-transaction-amount"].label.contains("12.30"), app.debugDescription)
+
+        scrollToElement(app.buttons["receipt-edit-details"], in: app)
+        tapButton("receipt-edit-details", in: app, timeout: 5)
+        scrollToElement(app.buttons["saved-receipt-use-included-line-total"], in: app)
+        tapButton("saved-receipt-use-included-line-total", in: app, timeout: 5)
+        tapButton("Save", in: app)
+        tapButton("Update Transaction Amount", in: app, timeout: 5)
+        XCTAssertTrue(app.staticTexts["saved-receipt-transaction-amount"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["saved-receipt-transaction-amount"].label.contains("12.30"), app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptBackedTransactionCanBeDeleted() throws {
+        let app = launchReceiptApp()
+
+        createManualBudgetPlanAndItems(in: app)
+        openManualItem("Meals", in: app)
+        beginFakeReceiptTransaction(in: app)
+        scrollToElement(app.textFields["receipt-merchant"], in: app)
+        tapButton("Save", in: app)
+
+        let created = button(containing: "Kedai Makan Contoh", in: app)
+        XCTAssertTrue(created.waitForExistence(timeout: 5), app.debugDescription)
+        created.swipeLeft()
+        tapButton("Delete", in: app)
+        tapButton("Delete Transaction", in: app)
+        XCTAssertFalse(created.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Meals"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testQuickAddExpenseDeepLinkOpensTransactionForm() throws {
+        let app = launchQuickAddApp(route: URL(string: "cani://quick-add?action=addExpense")!)
+
+        XCTAssertTrue(app.navigationBars["Add Transaction"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.textFields["transaction-amount"].exists, app.debugDescription)
+        XCTAssertTrue(["", "Amount"].contains(app.textFields["transaction-amount"].value as? String ?? ""), app.debugDescription)
+        XCTAssertTrue(app.buttons["destination-item-Meals"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testQuickScanReceiptDeepLinkOpensReceiptSourceChooser() throws {
+        let app = launchQuickAddApp(route: URL(string: "cani://quick-add?action=scanReceipt")!)
+
+        XCTAssertTrue(app.buttons["Camera"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["Files"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testPendingReceiptReviewOpensReceiptTransactionOnly() throws {
+        let app = launchPendingReceiptApp()
+
+        tapButton("receipt-inbox", in: app, timeout: 5)
+        tapButton("Review", in: app, timeout: 5)
+        XCTAssertTrue(app.navigationBars["Add Transaction"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.images["receipt-image-preview"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testPendingReceiptDeleteCancelKeepsReceipt() throws {
+        let app = launchPendingReceiptApp()
+
+        tapButton("receipt-inbox", in: app, timeout: 5)
+        tapButton("Delete", in: app, timeout: 5)
+        tapButton("Cancel Delete", in: app, timeout: 5)
+        XCTAssertTrue(app.buttons["Review"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testPendingReceiptDeleteConfirmRemovesReceipt() throws {
+        let app = launchPendingReceiptApp()
+
+        tapButton("receipt-inbox", in: app, timeout: 5)
+        tapButton("Delete", in: app, timeout: 5)
+        tapButton("Delete Pending Receipt", in: app, timeout: 5)
+        XCTAssertTrue(app.staticTexts["No Pending Receipts"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
+    func testPendingReceiptReviewLaterHidesNoticeButInboxRemains() throws {
+        let app = launchPendingReceiptApp()
+
+        XCTAssertTrue(app.buttons["pending-notice-review-later"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("pending-notice-review-later", in: app, timeout: 5)
+        XCTAssertFalse(app.buttons["pending-notice-review-later"].waitForExistence(timeout: 1), app.debugDescription)
+        XCTAssertTrue(app.buttons["receipt-inbox"].exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testReceiptInboxReopensAfterReviewLater() throws {
+        let app = launchPendingReceiptApp()
+
+        XCTAssertTrue(app.buttons["pending-notice-review-later"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("pending-notice-review-later", in: app, timeout: 5)
+        tapButton("receipt-inbox", in: app, timeout: 5)
+        XCTAssertTrue(app.navigationBars["Pending Receipts"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["Review"].exists, app.debugDescription)
+    }
+
+    @MainActor
     func testPhase4ZeroMetricsCollapseUntilSpendingExists() throws {
         let app = launchManualHierarchyApp()
 
@@ -1155,6 +1471,79 @@ final class CanIV2UITests: XCTestCase {
         return app
     }
 
+    private func launchReceiptApp(cameraDenied: Bool = false, cameraUnavailable: Bool = false, scannerError: Bool = false, partialScanner: Bool = false, fakeFileImport: String? = nil) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["UI_TESTING"] = "1"
+        app.launchEnvironment["UI_TESTING_CURRENCY_CODE"] = "MYR"
+        app.launchEnvironment["UI_TESTING_FAKE_RECEIPT_SCANNER"] = "1"
+        if let fakeFileImport {
+            app.launchEnvironment["UI_TESTING_FAKE_RECEIPT_FILE_IMPORT"] = fakeFileImport
+        }
+        if scannerError {
+            app.launchEnvironment["UI_TESTING_FAKE_RECEIPT_SCANNER_ERROR"] = "1"
+        }
+        if partialScanner {
+            app.launchEnvironment["UI_TESTING_FAKE_RECEIPT_SCANNER_PARTIAL"] = "1"
+        }
+        if cameraDenied {
+            app.launchEnvironment["UI_TESTING_CAMERA_DENIED"] = "1"
+        }
+        if cameraUnavailable {
+            app.launchEnvironment["UI_TESTING_CAMERA_UNAVAILABLE"] = "1"
+        }
+        app.launchArguments = [
+            "-phase2.onboardingComplete", "YES",
+            "-phase2.selectedTab", "budgets",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryM"
+        ]
+        app.launch()
+        return app
+    }
+
+    private func launchSavedReceiptApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["UI_TESTING"] = "1"
+        app.launchEnvironment["UI_TESTING_CURRENCY_CODE"] = "MYR"
+        app.launchEnvironment["UI_TESTING_SEED_SAVED_RECEIPT"] = "1"
+        app.launchArguments = [
+            "-phase2.onboardingComplete", "YES",
+            "-phase2.selectedTab", "budgets",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryM"
+        ]
+        app.launch()
+        return app
+    }
+
+    private func launchQuickAddApp(route: URL) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["UI_TESTING"] = "1"
+        app.launchEnvironment["UI_TESTING_CURRENCY_CODE"] = "MYR"
+        app.launchEnvironment["UI_TESTING_SEED_NUMERIC"] = "1"
+        app.launchEnvironment["UI_TESTING_QUICK_ADD_URL"] = route.absoluteString
+        app.launchArguments = [
+            "-phase2.onboardingComplete", "YES",
+            "-phase2.selectedTab", "home",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryM"
+        ]
+        app.launch()
+        return app
+    }
+
+    private func launchPendingReceiptApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["UI_TESTING"] = "1"
+        app.launchEnvironment["UI_TESTING_CURRENCY_CODE"] = "MYR"
+        app.launchEnvironment["UI_TESTING_SEED_NUMERIC"] = "1"
+        app.launchEnvironment["UI_TESTING_SEED_PENDING_RECEIPTS"] = "1"
+        app.launchArguments = [
+            "-phase2.onboardingComplete", "YES",
+            "-phase2.selectedTab", "transactions",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryM"
+        ]
+        app.launch()
+        return app
+    }
+
     private func launchSettingsApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["UI_TESTING"] = "1"
@@ -1222,6 +1611,14 @@ final class CanIV2UITests: XCTestCase {
         type(note, into: app.textFields["transaction-note"], app: app)
         tapButton("Save", in: app)
         XCTAssertTrue(button(containing: note, in: app).exists, app.debugDescription)
+    }
+
+    private func beginFakeReceiptTransaction(in app: XCUIApplication) {
+        tapButton("add-transaction", in: app)
+        tapButton("receipt-add", in: app)
+        tapButton("Camera", in: app)
+        XCTAssertTrue(app.buttons["receipt-scan"].waitForExistence(timeout: 5), app.debugDescription)
+        tapButton("receipt-scan", in: app)
     }
 
     private func visibleBudgetAddControlCount(in app: XCUIApplication) -> Int {
@@ -1457,6 +1854,12 @@ final class CanIV2UITests: XCTestCase {
             app.swipeUp()
         }
         return button
+    }
+
+    private func scrollToElement(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<6 where !element.exists || !element.isHittable {
+            app.swipeUp()
+        }
     }
 }
 

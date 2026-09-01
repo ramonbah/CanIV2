@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftData
 
 @MainActor
 struct SettingsUseCase {
@@ -229,13 +230,14 @@ struct ItemUseCase {
 struct TransactionUseCase {
     let repository: TransactionRepository
 
-    func create(kind: TransactionKind, amount: Decimal, date: Date, notes: String, item: BudgetItem, clock: AppClock) throws -> Transaction {
+    func create(kind: TransactionKind, amount: Decimal, date: Date, notes: String, item: BudgetItem, receiptDraft: ReceiptAttachmentDraft? = nil, clock: AppClock) throws -> Transaction {
         guard let plan = item.budgetPlan, let budget = plan.budget else { throw Phase2ValidationError.missingParentRelationship }
         try ValidationUseCase.validateTransaction(kind: kind, amount: amount, date: date, calendar: clock.calendar, asOf: clock.now)
         let trimmedNotes = NameNormalizer.trimmed(notes)
         let originalItemUpdatedAt = item.updatedAt
         let originalPlanUpdatedAt = plan.updatedAt
         let originalBudgetUpdatedAt = budget.updatedAt
+        let originalTransactions = item.transactions
         let transaction = Transaction(
             name: generatedName(for: kind),
             amount: amount,
@@ -246,19 +248,51 @@ struct TransactionUseCase {
             updatedAt: clock.now,
             budgetItem: item
         )
+        let receipt = receiptDraft.map {
+            ReceiptCapture(
+                imageData: $0.imageData,
+                merchant: $0.merchant,
+                date: $0.date,
+                total: $0.total,
+                createdAt: clock.now,
+                updatedAt: clock.now,
+                transaction: transaction
+            )
+        }
+        let receiptLines = receiptDraft?.lines.map { draft in
+            ReceiptLineItem(
+                rawText: draft.rawText,
+                name: draft.name,
+                amount: draft.amount,
+                isSelected: draft.isSelected,
+                createdAt: clock.now,
+                updatedAt: clock.now,
+                receiptCapture: receipt!
+            )
+        } ?? []
+        receipt?.lineItems = receiptLines
+        transaction.receipt = receipt
         item.transactions.append(transaction)
         item.updatedAt = clock.now
         plan.updatedAt = clock.now
         budget.updatedAt = clock.now
         repository.insert(transaction)
+        if let receipt {
+            (repository as? SwiftDataTransactionRepository)?.context.insert(receipt)
+            receiptLines.forEach { (repository as? SwiftDataTransactionRepository)?.context.insert($0) }
+        }
         do {
             try repository.save()
             return transaction
         } catch {
-            item.transactions.removeAll { $0.id == transaction.id }
+            item.transactions = originalTransactions
             item.updatedAt = originalItemUpdatedAt
             plan.updatedAt = originalPlanUpdatedAt
             budget.updatedAt = originalBudgetUpdatedAt
+            receiptLines.forEach { (repository as? SwiftDataTransactionRepository)?.context.delete($0) }
+            if let receipt {
+                (repository as? SwiftDataTransactionRepository)?.context.delete(receipt)
+            }
             try repository.delete(transaction)
             throw error
         }

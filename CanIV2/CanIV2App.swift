@@ -15,6 +15,9 @@ struct CanIV2App: App {
         if ProcessInfo.processInfo.environment["UI_TESTING"] == "1" {
             UserDefaults.standard.removePersistentDomain(forName: Bundle.main.bundleIdentifier ?? "CanIV2")
             try? KeychainSalaryStore().clearSalary()
+            if let inboxURL = try? SharedReceiptInboxLocator().inboxURL() {
+                try? FileManager.default.removeItem(at: inboxURL)
+            }
             UIView.setAnimationsEnabled(false)
         }
     }
@@ -111,9 +114,19 @@ private struct AppRootView: View {
 #if DEBUG
                 coordinator.seedRoundingMismatchForUITesting()
                 coordinator.seedNumericEditingForUITesting()
+                coordinator.seedSavedReceiptForUITesting()
                 coordinator.seedPhase3ForUITesting()
                 coordinator.seedReadmeScreenshotsForUITesting()
 #endif
+                await seedPendingReceiptsForUITestingIfNeeded()
+                await coordinator.reloadPendingReceipts()
+                if let routeString = ProcessInfo.processInfo.environment["UI_TESTING_QUICK_ADD_URL"],
+                   let url = URL(string: routeString) {
+                    coordinator.handleQuickAddURL(url)
+                }
+            }
+            .onOpenURL { url in
+                coordinator.handleQuickAddURL(url)
             }
             .onAppear {
                 coordinator.startLocalDayRefreshLoop()
@@ -152,9 +165,30 @@ private struct AppRootView: View {
                     coordinator.refreshIfLocalDayChanged()
                     try? coordinator.processDueRecurringTransactions()
                     coordinator.refresh()
+                    Task { await coordinator.reloadPendingReceipts() }
                 } else if newPhase == .background {
                     coordinator.hideSalary()
                 }
             }
+    }
+
+    private func seedPendingReceiptsForUITestingIfNeeded() async {
+        guard ProcessInfo.processInfo.environment["UI_TESTING_SEED_PENDING_RECEIPTS"] == "1",
+              let imageData = syntheticPendingReceiptImageData(),
+              let id = UUID(uuidString: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+              let inboxURL = try? SharedReceiptInboxLocator().inboxURL() else { return }
+        let service = SharedReceiptInboxService(inboxURL: inboxURL)
+        _ = try? await service.savePendingReceipt(data: imageData, originalExtension: "png", contentType: "public.png", now: coordinator.asOfDate, id: id)
+    }
+
+    private func syntheticPendingReceiptImageData() -> Data? {
+        UIGraphicsImageRenderer(size: CGSize(width: 320, height: 480)).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 320, height: 480))
+            "Fictional Market\nTOTAL RM 9.90".draw(
+                in: CGRect(x: 24, y: 24, width: 272, height: 420),
+                withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.black]
+            )
+        }.pngData()
     }
 }

@@ -6,6 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		6FBA0D4530458081002FB1D8 /* CanIReceiptShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6FBA0D3B30458081002FB1D8 /* CanIReceiptShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6FBA0D52304580ED002FB1D8 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6FBA0D51304580ED002FB1D8 /* WidgetKit.framework */; };
+		6FBA0D54304580ED002FB1D8 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6FBA0D53304580ED002FB1D8 /* SwiftUI.framework */; };
+		6FBA0D61304580EE002FB1D8 /* CanIQuickAddWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6FBA0D4F304580ED002FB1D8 /* CanIQuickAddWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		6F2552C5301F24D20033A122 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,14 +28,65 @@
 			remoteGlobalIDString = 6F2552B4301F24D00033A122;
 			remoteInfo = CanIV2;
 		};
+		6FBA0D4330458081002FB1D8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6F2552AD301F24D00033A122 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6FBA0D3A30458081002FB1D8;
+			remoteInfo = CanIReceiptShare;
+		};
+		6FBA0D5F304580EE002FB1D8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6F2552AD301F24D00033A122 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6FBA0D4E304580ED002FB1D8;
+			remoteInfo = CanIQuickAddWidgetExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6FBA0D4630458081002FB1D8 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				6FBA0D4530458081002FB1D8 /* CanIReceiptShare.appex in Embed Foundation Extensions */,
+				6FBA0D61304580EE002FB1D8 /* CanIQuickAddWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		6F2552B5301F24D00033A122 /* CanIV2.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CanIV2.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F2552C4301F24D20033A122 /* CanIV2Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CanIV2Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F2552CE301F24D20033A122 /* CanIV2UITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CanIV2UITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F901CC23028925800ED7E88 /* CanIV2.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = CanIV2.xctestplan; sourceTree = "<group>"; };
+		6FBA0D3B30458081002FB1D8 /* CanIReceiptShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanIReceiptShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6FBA0D4F304580ED002FB1D8 /* CanIQuickAddWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CanIQuickAddWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6FBA0D51304580ED002FB1D8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		6FBA0D53304580ED002FB1D8 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		6FBA0D683045816D002FB1D8 /* CanIQuickAddWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CanIQuickAddWidgetExtension.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		6FBA0D4930458081002FB1D8 /* Exceptions for "CanIReceiptShare" folder in "CanIReceiptShare" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6FBA0D3A30458081002FB1D8 /* CanIReceiptShare */;
+		};
+		6FBA0D62304580EE002FB1D8 /* Exceptions for "CanIQuickAddWidget" folder in "CanIQuickAddWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 6FBA0D4E304580ED002FB1D8 /* CanIQuickAddWidgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		6F2552B7301F24D00033A122 /* CanIV2 */ = {
@@ -44,6 +102,22 @@
 		6F2552D1301F24D20033A122 /* CanIV2UITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = CanIV2UITests;
+			sourceTree = "<group>";
+		};
+		6FBA0D3C30458081002FB1D8 /* CanIReceiptShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6FBA0D4930458081002FB1D8 /* Exceptions for "CanIReceiptShare" folder in "CanIReceiptShare" target */,
+			);
+			path = CanIReceiptShare;
+			sourceTree = "<group>";
+		};
+		6FBA0D55304580ED002FB1D8 /* CanIQuickAddWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				6FBA0D62304580EE002FB1D8 /* Exceptions for "CanIQuickAddWidget" folder in "CanIQuickAddWidgetExtension" target */,
+			);
+			path = CanIQuickAddWidget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -70,16 +144,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6FBA0D3830458081002FB1D8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FBA0D4C304580ED002FB1D8 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6FBA0D54304580ED002FB1D8 /* SwiftUI.framework in Frameworks */,
+				6FBA0D52304580ED002FB1D8 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		6F2552AC301F24D00033A122 = {
 			isa = PBXGroup;
 			children = (
+				6FBA0D683045816D002FB1D8 /* CanIQuickAddWidgetExtension.entitlements */,
 				6F901CC23028925800ED7E88 /* CanIV2.xctestplan */,
 				6F2552B7301F24D00033A122 /* CanIV2 */,
 				6F2552C7301F24D20033A122 /* CanIV2Tests */,
 				6F2552D1301F24D20033A122 /* CanIV2UITests */,
+				6FBA0D3C30458081002FB1D8 /* CanIReceiptShare */,
+				6FBA0D55304580ED002FB1D8 /* CanIQuickAddWidget */,
+				6FBA0D50304580ED002FB1D8 /* Frameworks */,
 				6F2552B6301F24D00033A122 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,8 +184,19 @@
 				6F2552B5301F24D00033A122 /* CanIV2.app */,
 				6F2552C4301F24D20033A122 /* CanIV2Tests.xctest */,
 				6F2552CE301F24D20033A122 /* CanIV2UITests.xctest */,
+				6FBA0D3B30458081002FB1D8 /* CanIReceiptShare.appex */,
+				6FBA0D4F304580ED002FB1D8 /* CanIQuickAddWidgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		6FBA0D50304580ED002FB1D8 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				6FBA0D51304580ED002FB1D8 /* WidgetKit.framework */,
+				6FBA0D53304580ED002FB1D8 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -104,10 +209,13 @@
 				6F2552B1301F24D00033A122 /* Sources */,
 				6F2552B2301F24D00033A122 /* Frameworks */,
 				6F2552B3301F24D00033A122 /* Resources */,
+				6FBA0D4630458081002FB1D8 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				6FBA0D4430458081002FB1D8 /* PBXTargetDependency */,
+				6FBA0D60304580EE002FB1D8 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				6F2552B7301F24D00033A122 /* CanIV2 */,
@@ -165,6 +273,50 @@
 			productReference = 6F2552CE301F24D20033A122 /* CanIV2UITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		6FBA0D3A30458081002FB1D8 /* CanIReceiptShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FBA0D4A30458081002FB1D8 /* Build configuration list for PBXNativeTarget "CanIReceiptShare" */;
+			buildPhases = (
+				6FBA0D3730458081002FB1D8 /* Sources */,
+				6FBA0D3830458081002FB1D8 /* Frameworks */,
+				6FBA0D3930458081002FB1D8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6FBA0D3C30458081002FB1D8 /* CanIReceiptShare */,
+			);
+			name = CanIReceiptShare;
+			packageProductDependencies = (
+			);
+			productName = CanIReceiptShare;
+			productReference = 6FBA0D3B30458081002FB1D8 /* CanIReceiptShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		6FBA0D4E304580ED002FB1D8 /* CanIQuickAddWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6FBA0D63304580EE002FB1D8 /* Build configuration list for PBXNativeTarget "CanIQuickAddWidgetExtension" */;
+			buildPhases = (
+				6FBA0D4B304580ED002FB1D8 /* Sources */,
+				6FBA0D4C304580ED002FB1D8 /* Frameworks */,
+				6FBA0D4D304580ED002FB1D8 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6FBA0D55304580ED002FB1D8 /* CanIQuickAddWidget */,
+			);
+			name = CanIQuickAddWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = CanIQuickAddWidgetExtension;
+			productReference = 6FBA0D4F304580ED002FB1D8 /* CanIQuickAddWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -172,7 +324,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2650;
+				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					6F2552B4301F24D00033A122 = {
@@ -185,6 +337,12 @@
 					6F2552CD301F24D20033A122 = {
 						CreatedOnToolsVersion = 26.5;
 						TestTargetID = 6F2552B4301F24D00033A122;
+					};
+					6FBA0D3A30458081002FB1D8 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					6FBA0D4E304580ED002FB1D8 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -205,6 +363,8 @@
 				6F2552B4301F24D00033A122 /* CanIV2 */,
 				6F2552C3301F24D20033A122 /* CanIV2Tests */,
 				6F2552CD301F24D20033A122 /* CanIV2UITests */,
+				6FBA0D3A30458081002FB1D8 /* CanIReceiptShare */,
+				6FBA0D4E304580ED002FB1D8 /* CanIQuickAddWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -225,6 +385,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		6F2552CC301F24D20033A122 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FBA0D3930458081002FB1D8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FBA0D4D304580ED002FB1D8 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -255,6 +429,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6FBA0D3730458081002FB1D8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6FBA0D4B304580ED002FB1D8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -267,6 +455,16 @@
 			isa = PBXTargetDependency;
 			target = 6F2552B4301F24D00033A122 /* CanIV2 */;
 			targetProxy = 6F2552CF301F24D20033A122 /* PBXContainerItemProxy */;
+		};
+		6FBA0D4430458081002FB1D8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6FBA0D3A30458081002FB1D8 /* CanIReceiptShare */;
+			targetProxy = 6FBA0D4330458081002FB1D8 /* PBXContainerItemProxy */;
+		};
+		6FBA0D60304580EE002FB1D8 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6FBA0D4E304580ED002FB1D8 /* CanIQuickAddWidgetExtension */;
+			targetProxy = 6FBA0D5F304580EE002FB1D8 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -324,6 +522,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "CanI uses the camera only when you choose to capture a receipt for on-device OCR.";
+				INFOPLIST_KEY_NSMainCameraUsageDescription = "CanI uses the camera only when you choose to capture a receipt for on-device OCR.";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -381,6 +581,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "CanI uses the camera only when you choose to capture a receipt for on-device OCR.";
+				INFOPLIST_KEY_NSMainCameraUsageDescription = "CanI uses the camera only when you choose to capture a receipt for on-device OCR.";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -395,6 +597,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = CanIAppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = CanIV2/CanIV2.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H9B2BL9T5W;
@@ -442,6 +645,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = CanIAppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = CanIV2/CanIV2.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = H9B2BL9T5W;
@@ -585,6 +789,136 @@
 			};
 			name = Release;
 		};
+		6FBA0D4730458081002FB1D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CanIReceiptShare/CanIReceiptShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H9B2BL9T5W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CanIReceiptShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanIReceiptShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = profile.com.ios.canIV2.CanIV2.CanIReceiptShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6FBA0D4830458081002FB1D8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CanIReceiptShare/CanIReceiptShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H9B2BL9T5W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CanIReceiptShare/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanIReceiptShare;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = profile.com.ios.canIV2.CanIV2.CanIReceiptShare;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		6FBA0D64304580EE002FB1D8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = CanIQuickAddWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H9B2BL9T5W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CanIQuickAddWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanIQuickAddWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = profile.com.ios.canIV2.CanIV2.CanIQuickAddWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6FBA0D65304580EE002FB1D8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = CanIQuickAddWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H9B2BL9T5W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CanIQuickAddWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CanIQuickAddWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = profile.com.ios.canIV2.CanIV2.CanIQuickAddWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -620,6 +954,24 @@
 			buildConfigurations = (
 				6F2552DF301F24D20033A122 /* Debug */,
 				6F2552E0301F24D20033A122 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6FBA0D4A30458081002FB1D8 /* Build configuration list for PBXNativeTarget "CanIReceiptShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FBA0D4730458081002FB1D8 /* Debug */,
+				6FBA0D4830458081002FB1D8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6FBA0D63304580EE002FB1D8 /* Build configuration list for PBXNativeTarget "CanIQuickAddWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FBA0D64304580EE002FB1D8 /* Debug */,
+				6FBA0D65304580EE002FB1D8 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

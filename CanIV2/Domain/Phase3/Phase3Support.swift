@@ -73,6 +73,22 @@ enum TransactionDateCriterion: Hashable {
     case custom(start: Date, end: Date)
 }
 
+enum ReceiptAttachmentCriterion: String, CaseIterable, Identifiable, Hashable {
+    case all
+    case hasReceipt
+    case noReceipt
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .hasReceipt: "Has Receipt"
+        case .noReceipt: "No Receipt"
+        }
+    }
+}
+
 struct TransactionFilterDraft: Equatable {
     var budgetIDs: Set<UUID> = []
     var planIDs: Set<UUID> = []
@@ -81,6 +97,7 @@ struct TransactionFilterDraft: Equatable {
     var dateCriterion: TransactionDateCriterion = .none
     var minimumAmountText = ""
     var maximumAmountText = ""
+    var receiptCriterion: ReceiptAttachmentCriterion = .all
 
     static let empty = TransactionFilterDraft()
 }
@@ -94,11 +111,12 @@ struct TransactionQuery: Equatable {
     var dateCriterion: TransactionDateCriterion = .none
     var minimumAmount: Decimal?
     var maximumAmount: Decimal?
+    var receiptCriterion: ReceiptAttachmentCriterion = .all
 
     static let empty = TransactionQuery()
 
     var hasActiveFilters: Bool {
-        !budgetIDs.isEmpty || !planIDs.isEmpty || !itemIDs.isEmpty || !kinds.isEmpty || dateCriterion != .none || minimumAmount != nil || maximumAmount != nil
+        !budgetIDs.isEmpty || !planIDs.isEmpty || !itemIDs.isEmpty || !kinds.isEmpty || dateCriterion != .none || minimumAmount != nil || maximumAmount != nil || receiptCriterion != .all
     }
 
     var hasSubmittedSearch: Bool {
@@ -115,6 +133,7 @@ enum TransactionFilterChip: Hashable {
     case date(TransactionDateCriterion)
     case minimumAmount
     case maximumAmount
+    case receipt(ReceiptAttachmentCriterion)
 }
 
 struct TransactionRouteSnapshot: Hashable {
@@ -135,6 +154,8 @@ struct TransactionResultSnapshot: Identifiable, Hashable {
     let date: Date
     let createdAt: Date
     let isScheduledIncome: Bool
+    let hasReceipt: Bool
+    let receiptSearchText: String
 }
 
 struct TransactionResultSection: Identifiable {
@@ -184,7 +205,8 @@ struct TransactionQueryService {
             kinds: draft.kinds,
             dateCriterion: draft.dateCriterion,
             minimumAmount: minimum,
-            maximumAmount: maximum
+            maximumAmount: maximum,
+            receiptCriterion: draft.receiptCriterion
         )
     }
 
@@ -247,10 +269,18 @@ struct TransactionQueryService {
         if !query.kinds.isEmpty, !query.kinds.contains(snapshot.kind) { return false }
         if let minimum = query.minimumAmount, snapshot.amount < minimum { return false }
         if let maximum = query.maximumAmount, snapshot.amount > maximum { return false }
+        switch query.receiptCriterion {
+        case .all:
+            break
+        case .hasReceipt:
+            if !snapshot.hasReceipt { return false }
+        case .noReceipt:
+            if snapshot.hasReceipt { return false }
+        }
         if !matchesDate(snapshot.date, criterion: query.dateCriterion) { return false }
         let search = normalizedSearch(query.submittedSearchText)
         guard !search.isEmpty else { return true }
-        return [snapshot.note ?? "", snapshot.itemName, snapshot.planName].contains {
+        return [snapshot.note ?? "", snapshot.itemName, snapshot.planName, snapshot.receiptSearchText].contains {
             normalizedSearch($0).contains(search)
         }
     }
@@ -302,7 +332,9 @@ struct TransactionQueryService {
                             kind: transaction.kind,
                             date: transaction.date,
                             createdAt: transaction.createdAt,
-                            isScheduledIncome: transaction.kind == .income && !Phase2Calculations.isEffective(transaction, asOf: asOf, calendar: calendar)
+                            isScheduledIncome: transaction.kind == .income && !Phase2Calculations.isEffective(transaction, asOf: asOf, calendar: calendar),
+                            hasReceipt: transaction.receipt != nil,
+                            receiptSearchText: receiptSearchText(for: transaction.receipt)
                         )
                     }
                 }
@@ -319,6 +351,15 @@ struct TransactionQueryService {
     private func normalizedSearch(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: locale)
+    }
+
+    private func receiptSearchText(for receipt: ReceiptCapture?) -> String {
+        guard let receipt else { return "" }
+        var parts: [String] = []
+        if let merchant = receipt.merchant { parts.append(merchant) }
+        parts.append(contentsOf: receipt.lineItems.compactMap(\.name))
+        parts.append(contentsOf: receipt.lineItems.map(\.rawText))
+        return parts.joined(separator: " ")
     }
 }
 

@@ -11,11 +11,39 @@ import SwiftData
 struct TransactionsRootView: View {
     @Environment(BudgetingCoordinator.self) private var coordinator
     @State private var filtersExpanded = false
+    @State private var showingReceiptInbox = false
 
     var body: some View {
         List {
+            if let notice = coordinator.pendingReceiptNotice {
+                Section {
+                    HStack {
+                        Label("New receipt ready for review", systemImage: "tray.and.arrow.down")
+                            .font(.subheadline)
+                        Spacer()
+                        Button("Review") {
+                            showingReceiptInbox = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("pending-notice-review")
+                        Button("Review Later") {
+                            coordinator.dismissPendingReceiptNotice(notice)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("pending-notice-review-later")
+                    }
+                    .frame(minHeight: 44)
+                    .task(id: notice.id) {
+                        try? await Task.sleep(nanoseconds: 8_000_000_000)
+                        await MainActor.run {
+                            coordinator.dismissPendingReceiptNotice(notice)
+                        }
+                    }
+                }
+            }
+
             Section {
-                TextField("Search notes, Items, Plans", text: Binding(get: { coordinator.transactionSearchDraft }, set: { coordinator.transactionSearchDraft = $0 }))
+                TextField("Search notes, Items, Plans, receipts", text: Binding(get: { coordinator.transactionSearchDraft }, set: { coordinator.transactionSearchDraft = $0 }))
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
                     .onSubmit { coordinator.submitTransactionSearch() }
@@ -100,6 +128,23 @@ struct TransactionsRootView: View {
             }
         }
         .navigationTitle("Transactions")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingReceiptInbox = true
+                } label: {
+                    Label("Receipt Inbox, \(coordinator.pendingReceipts.count) pending", systemImage: coordinator.pendingReceipts.isEmpty ? "tray" : "tray.full")
+                }
+                .accessibilityIdentifier("receipt-inbox")
+                .accessibilityLabel("Receipt Inbox, \(coordinator.pendingReceipts.count) pending")
+            }
+        }
+        .sheet(isPresented: $showingReceiptInbox) {
+            PendingReceiptsView(formatter: coordinator.formatter) { record, imageData in
+                showingReceiptInbox = false
+                coordinator.requestPendingReceiptReview(record, imageData: imageData)
+            }
+        }
         .task { coordinator.refresh() }
         .onDisappear {
             if coordinator.selectedTab != .transactions {
@@ -187,6 +232,13 @@ private struct TransactionFilterPanel: View {
                     .keyboardType(.decimalPad)
                     .accessibilityIdentifier("transactions-max-amount")
             }
+            Picker("Receipt", selection: Binding(get: { coordinator.transactionFilterDraft.receiptCriterion }, set: { coordinator.transactionFilterDraft.receiptCriterion = $0 })) {
+                ForEach(ReceiptAttachmentCriterion.allCases) { criterion in
+                    Text(criterion.title).tag(criterion)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("transactions-receipt-filter")
         }
     }
 
@@ -279,6 +331,11 @@ private struct TransactionResultRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if snapshot.hasReceipt {
+                    Label("Receipt attached", systemImage: "doc.text.viewfinder")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
             Text(formatter.string(for: snapshot.amount))
@@ -287,7 +344,7 @@ private struct TransactionResultRow: View {
                 .moneyEffortLookup(amount: snapshot.amount, formatter: formatter)
         }
         .frame(minHeight: 44)
-        .accessibilityLabel("\(snapshot.kind == .income ? "Income" : "Expense"), \(formatter.string(for: snapshot.amount)), \(snapshot.note ?? ""), \(snapshot.planName), \(snapshot.itemName)")
+        .accessibilityLabel("\(snapshot.kind == .income ? "Income" : "Expense"), \(formatter.string(for: snapshot.amount)), \(snapshot.note ?? ""), \(snapshot.planName), \(snapshot.itemName)\(snapshot.hasReceipt ? ", has receipt" : "")")
     }
 }
 

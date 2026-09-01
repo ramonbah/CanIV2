@@ -5,9 +5,14 @@
 //  Created by Ramon Jr Bahio on 8/2/26.
 //
 
+import AVFoundation
 import SwiftUI
 import SwiftData
 import Charts
+import PhotosUI
+import UIKit
+import UniformTypeIdentifiers
+import VisionKit
 
 struct BudgetsRootView: View {
     @Environment(BudgetingCoordinator.self) private var coordinator
@@ -102,6 +107,15 @@ struct BudgetsRootView: View {
             RecurringTemplateFormView(sheet: sheet, formatter: coordinator.formatter) {
                 activeRecurringSheet = nil
             }
+        }
+        .onChange(of: coordinator.quickAddCommand) { _, command in
+            guard let command else { return }
+            handleQuickAddCommand(command)
+        }
+        .onChange(of: coordinator.pendingReceiptReviewRequest) { _, request in
+            guard let request else { return }
+            beginPendingReceiptReview(record: request.record, imageData: request.imageData)
+            coordinator.clearPendingReceiptReviewRequest()
         }
     }
 
@@ -318,9 +332,14 @@ struct BudgetsRootView: View {
     @ViewBuilder
     private func transactionSheetContent(for sheet: ActiveTransactionSheet) -> some View {
         switch sheet {
-        case .create(let plan, let destination):
-            TransactionFormView(plan: plan, transactionSheet: .create(destination: destination), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { transaction, movedItem in
-                completeCreatedTransaction(plan: plan, transaction: transaction, movedItem: movedItem)
+        case .create(let plan, let destination, let startsReceiptCapture, let initialReceiptImageData, let pendingReceipt):
+            TransactionFormView(
+                plan: plan,
+                transactionSheet: .create(destination: destination, startsReceiptCapture: startsReceiptCapture, initialReceiptImageData: initialReceiptImageData),
+                formatter: coordinator.formatter,
+                defaultDate: coordinator.asOfDate
+            ) { transaction, movedItem in
+                completeCreatedTransaction(plan: plan, transaction: transaction, movedItem: movedItem, pendingReceipt: pendingReceipt)
             }
         case .edit(let transaction):
             TransactionFormView(plan: transaction.budgetItem.budgetPlan, transactionSheet: .edit(transaction), formatter: coordinator.formatter, defaultDate: coordinator.asOfDate) { _, movedItem in
@@ -329,7 +348,7 @@ struct BudgetsRootView: View {
         }
     }
 
-    private func completeCreatedTransaction(plan: BudgetPlan, transaction: Transaction?, movedItem: BudgetItem?) {
+    private func completeCreatedTransaction(plan: BudgetPlan, transaction: Transaction?, movedItem: BudgetItem?, pendingReceipt: SharedReceiptManifestRecord? = nil) {
         activeTransactionSheet = nil
         if let movedItem {
             coordinator.navigationSelection.selectPlan(plan.id)
@@ -337,6 +356,9 @@ struct BudgetsRootView: View {
         } else if let transaction, let item = transaction.budgetItem {
             coordinator.navigationSelection.selectPlan(plan.id)
             coordinator.navigationSelection.selectItem(item.id)
+        }
+        if let pendingReceipt, transaction != nil {
+            Task { try? await coordinator.deletePendingReceipt(pendingReceipt) }
         }
     }
 
@@ -346,6 +368,36 @@ struct BudgetsRootView: View {
             coordinator.navigationSelection.selectPlan(plan.id)
             coordinator.navigationSelection.selectItem(movedItem.id)
         }
+    }
+
+    private func handleQuickAddCommand(_ command: QuickAddNavigationCommand) {
+        let destinationID: UUID?
+        let startsReceiptCapture: Bool
+        switch command {
+        case .addExpense(let id):
+            destinationID = id
+            startsReceiptCapture = false
+        case .scanReceipt(let id):
+            destinationID = id
+            startsReceiptCapture = true
+        }
+        guard let plan = coordinator.quickAddPlan(fallbackDestinationID: destinationID) else {
+            coordinator.clearQuickAddCommand()
+            return
+        }
+        let destination = coordinator.quickAddDestination(for: destinationID)
+        activeSheet = nil
+        activePlanSheet = nil
+        activeItemSheet = nil
+        activeRolloverSheet = nil
+        activeRecurringSheet = nil
+        activeTransactionSheet = .create(plan: plan, destination: destination, startsReceiptCapture: startsReceiptCapture, initialReceiptImageData: nil, pendingReceipt: nil)
+        coordinator.clearQuickAddCommand()
+    }
+
+    private func beginPendingReceiptReview(record: SharedReceiptManifestRecord, imageData: Data) {
+        guard let plan = coordinator.quickAddPlan(fallbackDestinationID: nil) else { return }
+        activeTransactionSheet = .create(plan: plan, destination: nil, startsReceiptCapture: false, initialReceiptImageData: imageData, pendingReceipt: record)
     }
 }
 
@@ -709,12 +761,13 @@ private enum ActiveItemSheet: Identifiable {
 }
 
 private enum ActiveTransactionSheet: Identifiable {
-    case create(plan: BudgetPlan, destination: BudgetItem?)
+    case create(plan: BudgetPlan, destination: BudgetItem?, startsReceiptCapture: Bool = false, initialReceiptImageData: Data? = nil, pendingReceipt: SharedReceiptManifestRecord? = nil)
     case edit(Transaction)
 
     var id: String {
         switch self {
-        case .create(let plan, let destination): "create-transaction-\(plan.id)-\(destination?.id.uuidString ?? "none")"
+        case .create(let plan, let destination, let startsReceiptCapture, _, let pendingReceipt):
+            "create-transaction-\(plan.id)-\(destination?.id.uuidString ?? "none")-\(startsReceiptCapture)-\(pendingReceipt?.id.uuidString ?? "none")"
         case .edit(let transaction): "edit-transaction-\(transaction.id)"
         }
     }
@@ -1842,12 +1895,12 @@ private struct ItemDetailView: View {
 }
 
 private enum TransactionSheet: Identifiable {
-    case create(destination: BudgetItem?)
+    case create(destination: BudgetItem?, startsReceiptCapture: Bool = false, initialReceiptImageData: Data? = nil)
     case edit(Transaction)
 
     var id: String {
         switch self {
-        case .create(let item): "create-transaction-\(item?.id.uuidString ?? "none")"
+        case .create(let item, let startsReceiptCapture, _): "create-transaction-\(item?.id.uuidString ?? "none")-\(startsReceiptCapture)"
         case .edit(let transaction): "edit-transaction-\(transaction.id)"
         }
     }
@@ -2346,6 +2399,21 @@ private struct TransactionFormView: View {
     @State private var newItemName = ""
     @State private var errors = FieldErrors()
     @State private var showSummary = false
+    @State private var receiptImageData: Data?
+    @State private var receiptOCRImageData: Data?
+    @State private var receiptReview: ReceiptReviewDraft?
+    @State private var receiptErrorMessage: String?
+    @State private var showsReceiptSettingsAction = false
+    @State private var isScanningReceipt = false
+    @State private var showingReceiptSources = false
+    @State private var showingCamera = false
+    @State private var useDocumentCamera = true
+    @State private var showingFileImporter = false
+    @State private var showingPhotoLibrary = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var pendingPDFImport: ReceiptPDFImport?
+    @State private var pendingDocumentScan: PendingDocumentScanSelection?
+    @State private var scanTask: Task<Void, Never>?
 
     private var transaction: Transaction? {
         if case .edit(let transaction) = transactionSheet { return transaction }
@@ -2376,13 +2444,16 @@ private struct TransactionFormView: View {
         self.defaultDate = defaultDate
         self.onComplete = onComplete
         switch transactionSheet {
-        case .create(let destination):
+        case .create(let destination, let startsReceiptCapture, let initialReceiptImageData):
             _kind = State(initialValue: .expense)
             _amount = State(initialValue: "")
             _date = State(initialValue: defaultDate)
             _notes = State(initialValue: "")
             _destinationID = State(initialValue: destination?.id ?? plan.budgetItems.first?.id)
             _destinationMode = State(initialValue: plan.budgetItems.isEmpty ? .newItem : .existing)
+            _receiptImageData = State(initialValue: initialReceiptImageData)
+            _receiptOCRImageData = State(initialValue: initialReceiptImageData)
+            _showingReceiptSources = State(initialValue: startsReceiptCapture && initialReceiptImageData == nil)
         case .edit(let transaction):
             _kind = State(initialValue: transaction.kind)
             _amount = State(initialValue: LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: transaction.amount))
@@ -2390,6 +2461,7 @@ private struct TransactionFormView: View {
             _notes = State(initialValue: transaction.notes ?? "")
             _destinationID = State(initialValue: transaction.budgetItem.id)
             _destinationMode = State(initialValue: .existing)
+            _showingReceiptSources = State(initialValue: false)
         }
     }
 
@@ -2412,46 +2484,36 @@ private struct TransactionFormView: View {
                         .accessibilityIdentifier("transaction-note")
                 }
 
-                Section("Destination Item") {
-                    if transaction == nil {
-                        Picker("Destination", selection: $destinationMode) {
-                            ForEach(TransactionDestinationMode.allCases) { mode in
-                                Text(mode.title).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("transaction-destination-mode")
-                    }
-                    if destinationMode == .existing {
-                        if plan.budgetItems.isEmpty {
-                            ContentUnavailableView("No Items", systemImage: "checklist", description: Text("Create a new Item to continue."))
-                        }
-                        ForEach(plan.budgetItems.sorted { $0.sortOrder < $1.sortOrder }) { item in
-                            Button {
-                                destinationID = item.id
-                            } label: {
-                                HStack {
-                                    Text(item.name)
-                                    Spacer()
-                                    if destinationID == item.id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundStyle(Color.accentColor)
-                                    }
-                                }
-                                .frame(minHeight: 44)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("destination-item-\(item.name)")
-                            .accessibilityLabel("Destination Item, \(item.name)")
-                        }
-                    } else {
-                        TextField("New Item Name", text: $newItemName)
-                            .textInputAutocapitalization(.words)
-                            .accessibilityIdentifier("transaction-new-item-name")
-                        InlineErrorText(errors.name)
-                    }
-                    InlineErrorText(errors.destination)
+                Section("Receipt") {
+                    ReceiptCaptureSection(
+                        transaction: transaction,
+                        imageData: receiptImageData,
+                        review: $receiptReview,
+                        formatter: formatter,
+                        isScanning: isScanningReceipt,
+                        errorMessage: receiptErrorMessage,
+                        showsSettingsAction: showsReceiptSettingsAction,
+                        onChooseSource: { showingReceiptSources = true },
+                        onOpenSettings: openAppSettings,
+                        onScan: scanReceipt,
+                        onCancelScan: cancelReceiptScan,
+                        onRotateLeft: { transformReceiptImage(rotation: .counterClockwise, crop: nil) },
+                        onRotateRight: { transformReceiptImage(rotation: .clockwise, crop: nil) },
+                        onCropCenter: { transformReceiptImage(rotation: .none, crop: CGRect(x: 0.05, y: 0.05, width: 0.90, height: 0.90)) },
+                        onRemoveDraft: clearReceiptDraft,
+                        onRemoveSaved: removeSavedReceipt
+                    )
                 }
+
+                DestinationItemSection(
+                    showsDestinationMode: transaction == nil,
+                    items: plan.budgetItems.sorted { $0.sortOrder < $1.sortOrder },
+                    destinationMode: $destinationMode,
+                    destinationID: $destinationID,
+                    newItemName: $newItemName,
+                    nameError: errors.name,
+                    destinationError: errors.destination
+                )
 
                 if let projection {
                     Section("Projected Balances") {
@@ -2475,12 +2537,98 @@ private struct TransactionFormView: View {
             .alert("Check the highlighted fields", isPresented: $showSummary) {
                 Button("OK", role: .cancel) { }
             } message: { Text(errors.summary) }
+            .confirmationDialog("Add Receipt", isPresented: $showingReceiptSources, titleVisibility: .visible) {
+                Button("Camera") { acquireReceiptFromCamera() }
+                Button("Photo Library") { showingPhotoLibrary = true }
+                Button("Files") { acquireReceiptFromFiles() }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Receipt images and text stay on this device.")
+            }
+            .photosPicker(isPresented: $showingPhotoLibrary, selection: $selectedPhotoItem, matching: .images)
+            .confirmationDialog(
+                "Choose PDF Page",
+                isPresented: Binding(
+                    get: { pendingPDFImport != nil },
+                    set: { if !$0 { pendingPDFImport = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingPDFImport
+            ) { importInfo in
+                ForEach(importInfo.pageIndexes, id: \.self) { pageIndex in
+                    Button("Page \(pageIndex + 1)") {
+                        renderPendingPDFPage(importInfo, pageIndex: pageIndex)
+                    }
+                }
+                Button("Cancel", role: .cancel) { pendingPDFImport = nil }
+            } message: { importInfo in
+                Text("This PDF has \(importInfo.pageCount) pages. Choose one page to scan now.")
+            }
+            .fullScreenCover(isPresented: $showingCamera) {
+                ReceiptCameraCaptureView(useDocumentCamera: useDocumentCamera) { images in
+                    showingCamera = false
+                    handleDocumentCameraImages(images)
+                }
+            }
+            .confirmationDialog(
+                "Choose Scanned Page",
+                isPresented: Binding(
+                    get: { pendingDocumentScan != nil },
+                    set: { if !$0 { pendingDocumentScan = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: pendingDocumentScan
+            ) { selection in
+                ForEach(selection.pages) { page in
+                    Button("Page \(page.index + 1)") {
+                        pendingDocumentScan = nil
+                        prepareReceiptImage(page.image)
+                    }
+                }
+                Button("Cancel", role: .cancel) { pendingDocumentScan = nil }
+            } message: { selection in
+                Text("This scan has \(selection.pages.count) pages. Choose one page to scan now.")
+            }
+            .onChange(of: selectedPhotoItem) { _, item in
+                guard let item else { return }
+                Task {
+                    do {
+                        if let data = try await item.loadTransferable(type: Data.self),
+                           let image = UIImage(data: data) {
+                            await MainActor.run { prepareReceiptImage(image) }
+                        } else {
+                            await MainActor.run { receiptErrorMessage = "The selected image could not be loaded." }
+                        }
+                    } catch {
+                        await MainActor.run { receiptErrorMessage = "The selected image could not be loaded." }
+                    }
+                }
+            }
+            .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.image, .pdf], allowsMultipleSelection: false) { result in
+                handleReceiptFileImport(result)
+            }
+            .onDisappear {
+                cancelReceiptScan()
+            }
         }
     }
 
     private func save() {
         errors = FieldErrors()
         do {
+            let receiptDraft = try receiptReview.map { try ReceiptAttachmentDraft(review: $0, formatter: formatter) }
+            let reviewedAmount = try receiptReview?.transactionAmount(formatter: formatter)
+            if let reviewedAmount {
+                amount = LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: reviewedAmount)
+                kind = .expense
+                if let receiptDate = receiptReview?.date {
+                    date = receiptDate
+                }
+                let merchant = NameNormalizer.trimmed(receiptReview?.merchant ?? "")
+                if !merchant.isEmpty, notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    notes = merchant
+                }
+            }
             if let transaction {
                 guard let destinationID, let item = plan.budgetItems.first(where: { $0.id == destinationID }) else {
                     errors.destination = Phase2ValidationError.noDestinationItem.localizedDescription
@@ -2488,9 +2636,12 @@ private struct TransactionFormView: View {
                     return
                 }
                 let movedItem = try coordinator.updateTransaction(transaction, kind: kind, amountText: amount, date: date, notes: notes, destinationItem: item)
+                if let receiptDraft {
+                    try coordinator.replaceReceipt(on: transaction, with: receiptDraft)
+                }
                 onComplete(transaction, movedItem)
             } else if destinationMode == .newItem {
-                let result = try coordinator.createItemAndTransaction(kind: kind, amountText: amount, date: date, itemName: newItemName, in: plan)
+                let result = try coordinator.createItemAndTransaction(kind: kind, amountText: amount, date: date, itemName: newItemName, in: plan, receiptDraft: receiptDraft)
                 onComplete(result.transaction, result.item)
             } else {
                 guard let destinationID, let item = plan.budgetItems.first(where: { $0.id == destinationID }) else {
@@ -2498,13 +2649,1127 @@ private struct TransactionFormView: View {
                     showSummary = true
                     return
                 }
-                let transaction = try coordinator.createTransaction(kind: kind, amountText: amount, date: date, notes: notes, item: item)
+                let transaction = try coordinator.createTransaction(kind: kind, amountText: amount, date: date, notes: notes, item: item, receiptDraft: receiptDraft)
                 onComplete(transaction, nil)
             }
             dismiss()
         } catch {
             errors = fieldErrors(for: error)
             showSummary = true
+        }
+    }
+
+    private func acquireReceiptFromCamera() {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["UI_TESTING_CAMERA_DENIED"] == "1" {
+            receiptErrorMessage = "Camera access is denied. Enable camera access in Settings to capture receipts."
+            showsReceiptSettingsAction = true
+            return
+        }
+        if ProcessInfo.processInfo.environment["UI_TESTING_CAMERA_UNAVAILABLE"] == "1" {
+            receiptErrorMessage = "Camera is not available on this device."
+            showsReceiptSettingsAction = false
+            return
+        }
+        if ProcessInfo.processInfo.environment["UI_TESTING"] == "1" || ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_SCANNER"] == "1" {
+            prepareSyntheticReceiptImage()
+            return
+        }
+#endif
+#if targetEnvironment(simulator)
+        receiptErrorMessage = "Camera is not available on this device."
+        showsReceiptSettingsAction = false
+#else
+        guard VNDocumentCameraViewController.isSupported || UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            receiptErrorMessage = "Camera is not available on this device."
+            showsReceiptSettingsAction = false
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            useDocumentCamera = VNDocumentCameraViewController.isSupported
+            showingCamera = true
+        case .notDetermined:
+            Task {
+                let allowed = await AVCaptureDevice.requestAccess(for: .video)
+                await MainActor.run {
+                    if allowed {
+                        useDocumentCamera = VNDocumentCameraViewController.isSupported
+                        showingCamera = true
+                    } else {
+                        receiptErrorMessage = "Camera access is denied. Enable camera access in Settings to capture receipts."
+                        showsReceiptSettingsAction = true
+                    }
+                }
+            }
+        case .denied, .restricted:
+            receiptErrorMessage = "Camera access is denied. Enable camera access in Settings to capture receipts."
+            showsReceiptSettingsAction = true
+        @unknown default:
+            receiptErrorMessage = "Camera is not available on this device."
+            showsReceiptSettingsAction = false
+        }
+#endif
+    }
+
+    private func handleDocumentCameraImages(_ images: [UIImage]?) {
+        guard let images, !images.isEmpty else { return }
+        if images.count == 1, let image = images.first {
+            prepareReceiptImage(image)
+        } else {
+            pendingDocumentScan = PendingDocumentScanSelection(
+                pages: images.enumerated().map { ReceiptDocumentCameraPage(index: $0.offset, image: $0.element) }
+            )
+        }
+    }
+
+    private func acquireReceiptFromFiles() {
+#if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_FILE_IMPORT"] == "image" {
+            prepareSyntheticReceiptImage()
+            return
+        }
+        if ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_FILE_IMPORT"] == "pdf" {
+            do {
+                let importInfo = try ReceiptFileImportProcessor().pdfImport(from: syntheticReceiptPDFData(pageCount: 2))
+                pendingPDFImport = importInfo
+            } catch {
+                receiptErrorMessage = error.localizedDescription
+            }
+            return
+        }
+#endif
+        showingFileImporter = true
+    }
+
+    private func handleReceiptFileImport(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            let copiedURL: URL
+            do {
+                copiedURL = try ReceiptFileImportProcessor().copyIntoTemporaryStorage(from: url)
+            } catch {
+                if didAccess { url.stopAccessingSecurityScopedResource() }
+                throw error
+            }
+            if didAccess { url.stopAccessingSecurityScopedResource() }
+            let data = try Data(contentsOf: copiedURL)
+            try? FileManager.default.removeItem(at: copiedURL)
+            processImportedReceiptData(data, filenameExtension: url.pathExtension)
+        } catch CocoaError.userCancelled {
+            return
+        } catch {
+            receiptErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func processImportedReceiptData(_ data: Data, filenameExtension: String) {
+        let processor = ReceiptFileImportProcessor()
+        if filenameExtension.localizedCaseInsensitiveCompare("pdf") == .orderedSame {
+            do {
+                let importInfo = try processor.pdfImport(from: data)
+                if importInfo.pageCount == 1 {
+                    prepareReceiptImage(try processor.renderedImage(from: importInfo, pageIndex: 0))
+                } else {
+                    pendingPDFImport = importInfo
+                    receiptErrorMessage = nil
+                }
+            } catch {
+                receiptErrorMessage = error.localizedDescription
+            }
+            return
+        }
+        do {
+            prepareReceiptImage(try processor.image(from: data))
+        } catch {
+            do {
+                let importInfo = try processor.pdfImport(from: data)
+                if importInfo.pageCount == 1 {
+                    prepareReceiptImage(try processor.renderedImage(from: importInfo, pageIndex: 0))
+                } else {
+                    pendingPDFImport = importInfo
+                    receiptErrorMessage = nil
+                }
+            } catch {
+                receiptErrorMessage = Phase5ValidationError.unsupportedReceiptFile.localizedDescription
+            }
+        }
+    }
+
+    private func renderPendingPDFPage(_ importInfo: ReceiptPDFImport, pageIndex: Int) {
+        do {
+            prepareReceiptImage(try ReceiptFileImportProcessor().renderedImage(from: importInfo, pageIndex: pageIndex))
+            pendingPDFImport = nil
+        } catch {
+            receiptErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func prepareSyntheticReceiptImage() {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 480, height: 720)).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 480, height: 720))
+            let text = "Kedai Makan Contoh\n30/08/2026\nNasi Lemak RM 8.50\nTeh Ais RM 3.20\nGRAND TOTAL RM 12.30"
+            text.draw(in: CGRect(x: 32, y: 32, width: 416, height: 640), withAttributes: [.font: UIFont.systemFont(ofSize: 28), .foregroundColor: UIColor.black])
+        }
+        prepareReceiptImage(image)
+    }
+
+    private func syntheticReceiptPDFData(pageCount: Int) -> Data {
+        let format = UIGraphicsPDFRendererFormat()
+        return UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792), format: format).pdfData { context in
+            for page in 1...pageCount {
+                context.beginPage()
+                UIColor.white.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 612, height: 792))
+                let text = "Kedai Makan Contoh\nPDF Page \(page)\n30/08/2026\nNasi Lemak RM 8.50\nGRAND TOTAL RM 12.30"
+                text.draw(in: CGRect(x: 48, y: 48, width: 516, height: 696), withAttributes: [.font: UIFont.systemFont(ofSize: 28), .foregroundColor: UIColor.black])
+            }
+        }
+    }
+
+    private func prepareReceiptImage(_ image: UIImage) {
+        do {
+            receiptImageData = try ReceiptImageProcessor().normalizedJPEGData(from: image)
+            receiptOCRImageData = try ReceiptImageProcessor(policy: .ocr).normalizedJPEGData(from: image)
+            receiptReview = nil
+            receiptErrorMessage = nil
+            showsReceiptSettingsAction = false
+        } catch {
+            receiptErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func transformReceiptImage(rotation: ReceiptImageRotation, crop: CGRect?) {
+        guard let receiptImageData, let image = UIImage(data: receiptImageData) else { return }
+        do {
+            self.receiptImageData = try ReceiptImageProcessor().normalizedJPEGData(from: image, rotation: rotation, crop: crop)
+            self.receiptOCRImageData = try ReceiptImageProcessor(policy: .ocr).normalizedJPEGData(from: image, rotation: rotation, crop: crop)
+            receiptReview = nil
+            receiptErrorMessage = nil
+            showsReceiptSettingsAction = false
+        } catch {
+            receiptErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func scanReceipt() {
+        guard let receiptImageData else {
+            receiptErrorMessage = Phase5ValidationError.noImage.localizedDescription
+            return
+        }
+        let ocrImageData = receiptOCRImageData ?? receiptImageData
+        scanTask?.cancel()
+        isScanningReceipt = true
+        receiptErrorMessage = nil
+        scanTask = Task {
+            do {
+                var result = try await coordinator.scanReceipt(imageData: ocrImageData)
+                result.imageData = receiptImageData
+                await MainActor.run {
+                    receiptReview = ReceiptReviewDraft(scanResult: result, formatter: formatter)
+                    isScanningReceipt = false
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    receiptErrorMessage = Phase5ValidationError.scanningCancelled.localizedDescription
+                    isScanningReceipt = false
+                }
+            } catch {
+                await MainActor.run {
+                    receiptErrorMessage = error.localizedDescription
+                    isScanningReceipt = false
+                }
+            }
+        }
+    }
+
+    private func cancelReceiptScan() {
+        scanTask?.cancel()
+        scanTask = nil
+        isScanningReceipt = false
+    }
+
+    private func clearReceiptDraft() {
+        receiptImageData = nil
+        receiptOCRImageData = nil
+        receiptReview = nil
+        receiptErrorMessage = nil
+        showsReceiptSettingsAction = false
+    }
+
+    private func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    private func removeSavedReceipt() {
+        guard let transaction else { return }
+        do {
+            try coordinator.removeReceipt(from: transaction)
+        } catch {
+            receiptErrorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct ReceiptCaptureSection: View {
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let transaction: Transaction?
+    let imageData: Data?
+    @Binding var review: ReceiptReviewDraft?
+    let formatter: CurrencyFormatter
+    let isScanning: Bool
+    let errorMessage: String?
+    let showsSettingsAction: Bool
+    let onChooseSource: () -> Void
+    let onOpenSettings: () -> Void
+    let onScan: () -> Void
+    let onCancelScan: () -> Void
+    let onRotateLeft: () -> Void
+    let onRotateRight: () -> Void
+    let onCropCenter: () -> Void
+    let onRemoveDraft: () -> Void
+    let onRemoveSaved: () -> Void
+    @State private var confirmRemoveSaved = false
+    @State private var editingSavedReceipt: SavedReceiptEditSession?
+    @State private var savedEditError: String?
+
+    var body: some View {
+        if let receipt = transaction?.receipt, review == nil, imageData == nil {
+            SavedReceiptView(receipt: receipt, transactionAmount: transaction?.amount, formatter: formatter) {
+                editingSavedReceipt = SavedReceiptEditSession(receipt: receipt, draft: SavedReceiptEditDraft(receipt: receipt, formatter: formatter))
+            }
+            if let savedEditError {
+                Text(savedEditError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("saved-receipt-edit-error")
+            }
+            Button("Replace and Rescan", action: onChooseSource)
+                .accessibilityIdentifier("receipt-replace")
+            Button("Remove Receipt", role: .destructive) {
+                confirmRemoveSaved = true
+            }
+            .accessibilityIdentifier("receipt-remove")
+            .confirmationDialog("Remove receipt?", isPresented: $confirmRemoveSaved, titleVisibility: .visible) {
+                Button("Remove Receipt", role: .destructive, action: onRemoveSaved)
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("The Transaction will remain. The receipt image and recognized lines will be deleted.")
+            }
+            .sheet(item: $editingSavedReceipt) { session in
+                SavedReceiptEditorSheet(
+                    transaction: transaction,
+                    receipt: receipt,
+                    initialDraft: session.draft,
+                    formatter: formatter
+                ) { draft, amountChoice in
+                    guard let transaction else { return }
+                    do {
+                        let attachment = try draft.attachmentDraft(existingImageData: receipt.imageData, formatter: formatter)
+                        try coordinator.updateReceiptDetails(on: transaction, with: attachment, transactionAmount: amountChoice)
+                        savedEditError = nil
+                        editingSavedReceipt = nil
+                    } catch {
+                        savedEditError = error.localizedDescription
+                    }
+                }
+            }
+        } else if let imageData {
+            ReceiptImagePreview(imageData: imageData)
+            HStack {
+                Button { onRotateLeft() } label: { Label("Rotate Left", systemImage: "rotate.left") }
+                Button { onRotateRight() } label: { Label("Rotate Right", systemImage: "rotate.right") }
+            }
+            .frame(minHeight: 44)
+            Button("Crop Center", action: onCropCenter)
+                .accessibilityIdentifier("receipt-crop-center")
+            if isScanning {
+                ProgressView("Scanning receipt")
+                    .accessibilityIdentifier("receipt-scan-progress")
+                Button("Cancel Scan", action: onCancelScan)
+            } else {
+                Button(review == nil ? "Scan Receipt" : "Rescan Receipt", action: onScan)
+                    .accessibilityIdentifier("receipt-scan")
+            }
+            if review != nil {
+                ReceiptReviewEditor(
+                    review: Binding(
+                        get: {
+                            review ?? ReceiptReviewDraft(
+                                scanResult: ReceiptScanResult(
+                                    imageData: Data(),
+                                    recognizedLines: [],
+                                    dateCandidates: [],
+                                    hasAmbiguousDate: false,
+                                    totalCandidates: [],
+                                    lineItemCandidates: [],
+                                    warnings: []
+                                ),
+                                formatter: formatter
+                            )
+                        },
+                        set: { review = $0 }
+                    ),
+                    formatter: formatter
+                )
+            }
+            Button("Remove Draft Receipt", role: .destructive, action: onRemoveDraft)
+                .accessibilityIdentifier("receipt-remove-draft")
+        } else {
+            Button {
+                onChooseSource()
+            } label: {
+                Label("Add Receipt", systemImage: "doc.text.viewfinder")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .accessibilityIdentifier("receipt-add")
+            Text("OCR suggestions stay editable and are saved only with this Transaction.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        if let errorMessage {
+            Text(errorMessage)
+                .font(.footnote)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("receipt-error")
+            if showsSettingsAction {
+                Button("Open Settings", action: onOpenSettings)
+                    .accessibilityIdentifier("receipt-open-settings")
+            }
+        }
+    }
+}
+
+private struct SavedReceiptEditSession: Identifiable {
+    let id = UUID()
+    var receipt: ReceiptCapture
+    var draft: SavedReceiptEditDraft
+}
+
+private struct DestinationItemSelectionRow: View {
+    let item: BudgetItem
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                Text(item.name)
+                Spacer()
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("destination-item-\(item.name)")
+        .accessibilityLabel("Destination Item, \(item.name)")
+    }
+}
+
+private struct DestinationItemSection: View {
+    let showsDestinationMode: Bool
+    let items: [BudgetItem]
+    @Binding var destinationMode: TransactionDestinationMode
+    @Binding var destinationID: UUID?
+    @Binding var newItemName: String
+    let nameError: String?
+    let destinationError: String?
+
+    var body: some View {
+        Section("Destination Item") {
+            if showsDestinationMode {
+                Picker("Destination", selection: $destinationMode) {
+                    ForEach(TransactionDestinationMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("transaction-destination-mode")
+            }
+            if destinationMode == .existing {
+                if items.isEmpty {
+                    ContentUnavailableView("No Items", systemImage: "checklist", description: Text("Create a new Item to continue."))
+                }
+                ForEach(items) { item in
+                    DestinationItemSelectionRow(item: item, isSelected: destinationID == item.id) {
+                        destinationID = item.id
+                    }
+                }
+            } else {
+                TextField("New Item Name", text: $newItemName)
+                    .textInputAutocapitalization(.words)
+                    .accessibilityIdentifier("transaction-new-item-name")
+                InlineErrorText(nameError)
+            }
+            InlineErrorText(destinationError)
+        }
+    }
+}
+
+struct PendingReceiptsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(BudgetingCoordinator.self) private var coordinator
+    let formatter: CurrencyFormatter
+    let onReview: (SharedReceiptManifestRecord, Data) -> Void
+    @State private var previewData: [UUID: Data] = [:]
+    @State private var errorMessage: String?
+    @State private var deletion: SharedReceiptManifestRecord?
+    @State private var pdfSelection: PendingPDFSelection?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if coordinator.pendingReceipts.isEmpty {
+                    ContentUnavailableView("No Pending Receipts", systemImage: "tray", description: Text("Shared receipt files will appear here before review."))
+                } else {
+                    ForEach(coordinator.pendingReceipts) { record in
+                        VStack(alignment: .leading, spacing: 8) {
+                            ReceiptImagePreview(imageData: previewData[record.id])
+                            Text(record.contentType == UTType.pdf.identifier ? "PDF receipt" : "Receipt image")
+                                .font(.headline)
+                            Text(record.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Button("Review") {
+                                    Task { await review(record) }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("pending-receipt-review-\(record.id.uuidString)")
+                                Button("Delete", role: .destructive) {
+                                    deletion = record
+                                }
+                                .buttonStyle(.bordered)
+                                .accessibilityIdentifier("pending-receipt-delete-\(record.id.uuidString)")
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .task {
+                            await loadPreview(for: record)
+                        }
+                    }
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("pending-receipts-error")
+                }
+            }
+            .navigationTitle("Pending Receipts")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Review Later") { dismiss() }
+                }
+            }
+            .alert(
+                "Delete pending receipt?",
+                isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }),
+                presenting: deletion
+            ) { record in
+                Button("Delete Pending Receipt", role: .destructive) {
+                    Task {
+                        try? await coordinator.deletePendingReceipt(record)
+                        deletion = nil
+                    }
+                }
+                Button("Cancel Delete", role: .cancel) { deletion = nil }
+            } message: { _ in
+                Text("This removes the pending shared file before it is imported.")
+            }
+            .confirmationDialog(
+                "Choose PDF Page",
+                isPresented: Binding(get: { pdfSelection != nil }, set: { if !$0 { pdfSelection = nil } }),
+                titleVisibility: .visible,
+                presenting: pdfSelection
+            ) { selection in
+                ForEach(selection.importInfo.pageIndexes, id: \.self) { pageIndex in
+                    Button("Page \(pageIndex + 1)") {
+                        usePDFPage(selection, pageIndex: pageIndex)
+                    }
+                }
+                Button("Cancel", role: .cancel) { pdfSelection = nil }
+            } message: { selection in
+                Text("This PDF has \(selection.importInfo.pageCount) pages. Choose one page to review.")
+            }
+            .task {
+                await coordinator.reloadPendingReceipts()
+            }
+        }
+    }
+
+    private func loadPreview(for record: SharedReceiptManifestRecord) async {
+        guard previewData[record.id] == nil else { return }
+        do {
+            let data = try await coordinator.data(forPendingReceipt: record)
+            let processor = ReceiptFileImportProcessor(maximumPDFRenderDimension: 480)
+            let image = if record.contentType == UTType.pdf.identifier {
+                try processor.renderedImage(from: processor.pdfImport(from: data), pageIndex: 0)
+            } else {
+                try processor.image(from: data)
+            }
+            previewData[record.id] = try ReceiptImageProcessor(policy: ReceiptImagePolicy(maximumDimension: 480, jpegCompressionQuality: 0.72)).normalizedJPEGData(from: image)
+        } catch {
+            errorMessage = "A pending receipt could not be previewed."
+        }
+    }
+
+    private func review(_ record: SharedReceiptManifestRecord) async {
+        do {
+            let data = try await coordinator.data(forPendingReceipt: record)
+            let processor = ReceiptFileImportProcessor()
+            if record.contentType == UTType.pdf.identifier {
+                let importInfo = try processor.pdfImport(from: data)
+                if importInfo.pageCount == 1 {
+                    usePDFPage(PendingPDFSelection(record: record, importInfo: importInfo), pageIndex: 0)
+                } else {
+                    pdfSelection = PendingPDFSelection(record: record, importInfo: importInfo)
+                }
+            } else {
+                let image = try processor.image(from: data)
+                let normalized = try ReceiptImageProcessor().normalizedJPEGData(from: image)
+                onReview(record, normalized)
+            }
+        } catch {
+            errorMessage = "This pending receipt could not be opened."
+        }
+    }
+
+    private func usePDFPage(_ selection: PendingPDFSelection, pageIndex: Int) {
+        do {
+            let image = try ReceiptFileImportProcessor().renderedImage(from: selection.importInfo, pageIndex: pageIndex)
+            let normalized = try ReceiptImageProcessor().normalizedJPEGData(from: image)
+            pdfSelection = nil
+            onReview(selection.record, normalized)
+        } catch {
+            errorMessage = "This PDF page could not be opened."
+        }
+    }
+}
+
+private struct PendingPDFSelection: Identifiable {
+    var id: UUID { record.id }
+    var record: SharedReceiptManifestRecord
+    var importInfo: ReceiptPDFImport
+}
+
+private struct ReceiptReviewEditor: View {
+    @Binding var review: ReceiptReviewDraft
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        Picker("Receipt Mode", selection: $review.mode) {
+            ForEach(ReceiptReviewMode.allCases) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("receipt-mode")
+        TextField("Merchant", text: $review.merchant)
+            .accessibilityIdentifier("receipt-merchant")
+        DatePicker("Receipt Date", selection: Binding(get: { review.date ?? Date() }, set: { review.date = $0 }), displayedComponents: .date)
+            .accessibilityIdentifier("receipt-date")
+        NumericTextField("Receipt Total", text: $review.totalText, kind: .decimal, locale: formatter.locale, error: .constant(nil))
+            .keyboardType(.decimalPad)
+            .accessibilityIdentifier("receipt-total")
+        Label(review.recognitionStatus.title, systemImage: review.recognitionStatus == .recognized ? "checkmark.circle" : "exclamationmark.triangle")
+            .font(.footnote)
+            .foregroundStyle(review.recognitionStatus == .recognized ? Color.secondary : Color.orange)
+            .accessibilityIdentifier("receipt-recognition-status")
+        if !review.warnings.isEmpty {
+            ForEach(review.warnings, id: \.self) { warning in
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+        }
+        LabeledContent("Selected Subtotal", value: formatter.string(for: review.selectedSubtotal()))
+            .accessibilityIdentifier("receipt-selected-subtotal")
+        if review.mode == .selectedItems {
+            ReceiptCalculationSummary(review: review, formatter: formatter)
+                .accessibilityIdentifier("receipt-calculation-summary")
+        }
+        ForEach($review.lineItems) { $line in
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Select \(line.name)", isOn: $line.isSelected)
+                    .accessibilityIdentifier("receipt-line-selected-\(line.id.uuidString)")
+                TextField("Line Name", text: $line.name)
+                    .accessibilityIdentifier("receipt-line-name-\(line.id.uuidString)")
+                NumericReceiptLineAmountField(line: $line, locale: formatter.locale)
+                Text(line.rawText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .accessibilityLabel("Raw recognized line")
+                Button("Remove Line", role: .destructive) {
+                    review.lineItems.removeAll { $0.id == line.id }
+                }
+                .accessibilityIdentifier("receipt-line-remove-\(line.id.uuidString)")
+            }
+            .padding(.vertical, 4)
+        }
+        Button("Add Missing Line") {
+            review.lineItems.append(ReceiptLineSuggestion(rawText: "Manual line", name: "", amount: nil, isSelected: true))
+        }
+        .accessibilityIdentifier("receipt-add-line")
+
+        if !review.charges.isEmpty {
+            Section("Charges") {
+                ForEach($review.charges) { $charge in
+                    ReceiptChargeEditor(charge: $charge, mode: review.mode, formatter: formatter)
+                }
+            }
+        }
+        Button("Add Charge") {
+            review.charges.append(ReceiptChargeSuggestion(rawText: "Manual charge", name: "Other Charge", originalAmount: nil, kind: .other, source: .manual))
+        }
+        .accessibilityIdentifier("receipt-add-charge")
+
+        Section("Additional Tip") {
+            NumericTextField("Fixed Tip", text: $review.additionalTipText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                .keyboardType(.decimalPad)
+                .accessibilityIdentifier("receipt-fixed-tip")
+            NumericTextField("Tip Percentage", text: $review.percentageTipText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                .keyboardType(.decimalPad)
+                .accessibilityIdentifier("receipt-percentage-tip")
+            if let tip = try? review.additionalTipAmount(formatter: formatter) {
+                LabeledContent("Calculated Tip", value: formatter.string(for: tip))
+                    .accessibilityIdentifier("receipt-calculated-tip")
+            }
+        }
+    }
+}
+
+private struct ReceiptCalculationSummary: View {
+    var review: ReceiptReviewDraft
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Selected products", value: formatter.string(for: review.selectedSubtotal()))
+            LabeledContent("Included charges", value: formatter.string(for: (try? review.includedCharges(formatter: formatter).reduce(Decimal(0), +)) ?? 0))
+            LabeledContent("Additional tip", value: formatter.string(for: (try? review.additionalTipAmount(formatter: formatter)) ?? 0))
+            LabeledContent("Transaction total", value: formatter.string(for: (try? review.transactionAmount(formatter: formatter)) ?? 0))
+                .font(.headline)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ReceiptChargeEditor: View {
+    @Binding var charge: ReceiptChargeSuggestion
+    let mode: ReceiptReviewMode
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Charge Name", text: $charge.name)
+                .accessibilityIdentifier("receipt-charge-name-\(charge.id.uuidString)")
+            TextField("Charge Amount", text: Binding(
+                get: {
+                    charge.originalAmount.map { LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: $0) } ?? ""
+                },
+                set: { newValue in
+                    charge.originalAmount = LocalizedNumericEditingPolicy(locale: formatter.locale).completeDecimal(from: newValue)
+                }
+            ))
+            .keyboardType(.decimalPad)
+            .accessibilityIdentifier("receipt-charge-amount-\(charge.id.uuidString)")
+            LabeledContent("Original", value: charge.originalAmount.map { formatter.string(for: $0) } ?? "No amount")
+            if mode == .wholeReceipt {
+                Text("Included in receipt total")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("receipt-charge-included-\(charge.id.uuidString)")
+            } else {
+                Picker("Allocation", selection: $charge.allocationMethod) {
+                    ForEach(ReceiptChargeAllocationMethod.allCases) { method in
+                        Text(method.title).tag(method)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("receipt-charge-allocation-\(charge.id.uuidString)")
+                if charge.allocationMethod == .percentage {
+                    NumericTextField("Percentage", text: $charge.percentageText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                        .keyboardType(.decimalPad)
+                        .accessibilityIdentifier("receipt-charge-percentage-\(charge.id.uuidString)")
+                } else if charge.allocationMethod == .divideEqually {
+                    NumericTextField("Divisor", text: $charge.divisorText, kind: .wholeNumber, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                        .keyboardType(.numberPad)
+                        .accessibilityIdentifier("receipt-charge-divisor-\(charge.id.uuidString)")
+                }
+                let applied = (try? charge.appliedAmount(formatter: formatter)) ?? 0
+                LabeledContent("Applied", value: formatter.string(for: applied))
+                    .accessibilityIdentifier("receipt-charge-applied-\(charge.id.uuidString)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct NumericReceiptLineAmountField: View {
+    @Binding var line: ReceiptLineSuggestion
+    let locale: Locale
+    @State private var text: String
+    @State private var error: String?
+
+    init(line: Binding<ReceiptLineSuggestion>, locale: Locale) {
+        _line = line
+        self.locale = locale
+        _text = State(initialValue: line.wrappedValue.amount.map { LocalizedNumericEditingPolicy(locale: locale).editableString(for: $0) } ?? "")
+    }
+
+    var body: some View {
+        NumericTextField("Line Amount", text: $text, kind: .decimal, locale: locale, error: $error)
+            .keyboardType(.decimalPad)
+            .accessibilityIdentifier("receipt-line-amount-\(line.id.uuidString)")
+            .onChange(of: text) { _, newValue in
+                line.amount = LocalizedNumericEditingPolicy(locale: locale).completeDecimal(from: newValue)
+            }
+        InlineErrorText(error)
+    }
+}
+
+private struct SavedReceiptView: View {
+    let receipt: ReceiptCapture
+    let transactionAmount: Decimal?
+    let formatter: CurrencyFormatter
+    let onEdit: () -> Void
+
+    var body: some View {
+        let presentation = SavedReceiptPresentation(lines: receipt.lineItems)
+        ReceiptImagePreview(imageData: receipt.imageData)
+        Section("Receipt Summary") {
+            Text("Receipt attached")
+                .font(.headline)
+                .accessibilityIdentifier("receipt-saved-summary")
+            if let merchant = receipt.merchant {
+                LabeledContent("Merchant", value: merchant)
+            }
+            if let total = receipt.total {
+                LabeledContent("Reviewed Total", value: formatter.string(for: total))
+            }
+            if let date = receipt.date {
+                LabeledContent("Receipt Date", value: date.formatted(date: .abbreviated, time: .omitted))
+            }
+            LabeledContent("Included Product Subtotal", value: formatter.string(for: presentation.includedSubtotal))
+                .accessibilityIdentifier("saved-receipt-included-subtotal")
+            LabeledContent("Included Charges and Tips", value: formatter.string(for: presentation.includedChargesAndTipsSubtotal))
+                .accessibilityIdentifier("saved-receipt-included-charges")
+            LabeledContent("Included-Line Total", value: formatter.string(for: presentation.includedLineTotal))
+                .accessibilityIdentifier("saved-receipt-included-line-total")
+            if let transactionAmount {
+                LabeledContent("Transaction Amount", value: formatter.string(for: transactionAmount))
+                    .accessibilityIdentifier("saved-receipt-transaction-amount")
+            }
+            Button("Edit Receipt Details", action: onEdit)
+                .accessibilityIdentifier("receipt-edit-details")
+        }
+        if !presentation.includedItems.isEmpty {
+            Section("Included Items") {
+                ForEach(presentation.includedItems) { line in
+                    SavedReceiptLineRow(line: line, formatter: formatter)
+                }
+            }
+        }
+        if !presentation.excludedItems.isEmpty {
+            Section("Excluded Items") {
+                ForEach(presentation.excludedItems) { line in
+                    SavedReceiptLineRow(line: line, formatter: formatter)
+                }
+            }
+        }
+        if !presentation.chargesAndTips.isEmpty {
+            Section("Charges and Tips") {
+                ForEach(presentation.chargesAndTips) { line in
+                    SavedReceiptLineRow(line: line, formatter: formatter)
+                }
+            }
+        }
+    }
+}
+
+private struct SavedReceiptLineRow: View {
+    let line: ReceiptLineItem
+    let formatter: CurrencyFormatter
+
+    var body: some View {
+        LabeledContent(line.name ?? line.rawText) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(line.amount.map { formatter.string(for: $0) } ?? "No amount")
+                Text(line.isSelected ? "Included" : "Excluded")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityLabel("\(line.name ?? line.rawText), \(line.amount.map { formatter.string(for: $0) } ?? "No amount"), \(line.isSelected ? "included" : "excluded")")
+    }
+}
+
+private struct SavedReceiptEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let transaction: Transaction?
+    let receipt: ReceiptCapture
+    let formatter: CurrencyFormatter
+    let onSave: (SavedReceiptEditDraft, Decimal?) -> Void
+    @State private var draft: SavedReceiptEditDraft
+    @State private var proposedTransactionAmountText: String
+    @State private var showingAmountChoice = false
+    @State private var errorMessage: String?
+
+    init(
+        transaction: Transaction?,
+        receipt: ReceiptCapture,
+        initialDraft: SavedReceiptEditDraft,
+        formatter: CurrencyFormatter,
+        onSave: @escaping (SavedReceiptEditDraft, Decimal?) -> Void
+    ) {
+        self.transaction = transaction
+        self.receipt = receipt
+        self.formatter = formatter
+        self.onSave = onSave
+        _draft = State(initialValue: initialDraft)
+        _proposedTransactionAmountText = State(initialValue: transaction.map { LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: $0.amount) } ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Receipt Summary") {
+                    TextField("Merchant", text: $draft.merchant)
+                        .accessibilityIdentifier("saved-receipt-merchant")
+                    DatePicker("Receipt Date", selection: Binding(get: { draft.date ?? Date() }, set: { draft.date = $0 }), displayedComponents: .date)
+                        .accessibilityIdentifier("saved-receipt-date")
+                    NumericTextField("Reviewed Total", text: $draft.totalText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                        .keyboardType(.decimalPad)
+                        .accessibilityIdentifier("saved-receipt-total")
+                    LabeledContent("Included Product Subtotal", value: includedProductSubtotalText)
+                        .accessibilityIdentifier("saved-receipt-edit-product-subtotal")
+                    LabeledContent("Included Charges and Tips", value: includedChargesAndTipsText)
+                        .accessibilityIdentifier("saved-receipt-edit-charges-subtotal")
+                    LabeledContent("Included-Line Total", value: includedLineTotalText)
+                        .accessibilityIdentifier("saved-receipt-resulting-amount")
+                    if transaction != nil {
+                        NumericTextField("Proposed Transaction Amount", text: $proposedTransactionAmountText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                            .keyboardType(.decimalPad)
+                            .accessibilityIdentifier("saved-receipt-proposed-transaction-amount")
+                        Button("Use Included-Line Total") {
+                            if let amount = try? draft.includedAmount(formatter: formatter) {
+                                proposedTransactionAmountText = LocalizedNumericEditingPolicy(locale: formatter.locale).editableString(for: amount)
+                            }
+                        }
+                        .accessibilityIdentifier("saved-receipt-use-included-line-total")
+                    }
+                }
+                Section("Receipt Lines") {
+                    ForEach($draft.lines) { $line in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle("Included", isOn: $line.isSelected)
+                                .accessibilityIdentifier("saved-receipt-line-included-\(line.id.uuidString)")
+                            TextField("Line Name", text: $line.name)
+                                .accessibilityIdentifier("saved-receipt-line-name-\(line.id.uuidString)")
+                            NumericTextField("Line Amount", text: $line.amountText, kind: .decimal, locale: formatter.locale, error: Binding<String?>.constant(nil))
+                                .keyboardType(.decimalPad)
+                                .accessibilityIdentifier("saved-receipt-line-amount-\(line.id.uuidString)")
+                            Button("Remove Line", role: .destructive) {
+                                draft.lines.removeAll { $0.id == line.id }
+                            }
+                            .accessibilityIdentifier("saved-receipt-line-remove-\(line.id.uuidString)")
+                        }
+                    }
+                    Button("Add Missing Line") {
+                        draft.lines.append(SavedReceiptLineDraft(rawText: "Manual saved line", name: "", amountText: "", isSelected: true))
+                    }
+                    .accessibilityIdentifier("saved-receipt-add-line")
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .accessibilityIdentifier("saved-receipt-editor-error")
+                }
+            }
+            .navigationTitle("Edit Receipt Details")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", action: dismiss.callAsFunction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save", action: prepareSave)
+                }
+            }
+            .confirmationDialog(
+                "Update Transaction Amount?",
+                isPresented: $showingAmountChoice,
+                titleVisibility: .visible
+            ) {
+                Button("Update Transaction Amount") {
+                    saveUpdatingTransactionAmount()
+                }
+                Button("Keep Current Transaction Amount") {
+                    onSave(draft, nil)
+                }
+                Button("Cancel", role: .cancel) {
+                    showingAmountChoice = false
+                }
+            } message: {
+                Text("Choose whether to update the Transaction amount using the editable proposed amount. The included-line total is informational unless you choose to use it.")
+            }
+        }
+    }
+
+    private var includedLineTotalText: String {
+        guard let amount = try? draft.includedAmount(formatter: formatter) else { return "Check line amounts" }
+        return formatter.string(for: amount)
+    }
+
+    private var includedProductSubtotalText: String {
+        guard let amount = try? draft.includedProductSubtotal(formatter: formatter) else { return "Check line amounts" }
+        return formatter.string(for: amount)
+    }
+
+    private var includedChargesAndTipsText: String {
+        guard let amount = try? draft.includedChargeTipSubtotal(formatter: formatter) else { return "Check line amounts" }
+        return formatter.string(for: amount)
+    }
+
+    private func prepareSave() {
+        do {
+            _ = try draft.attachmentDraft(existingImageData: receipt.imageData, formatter: formatter)
+            _ = try draft.includedAmount(formatter: formatter)
+            if transaction != nil {
+                showingAmountChoice = true
+            } else {
+                onSave(draft, nil)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveUpdatingTransactionAmount() {
+        guard let amount = formatter.parse(proposedTransactionAmountText), amount > 0 else {
+            errorMessage = Phase2ValidationError.nonPositiveAmount.localizedDescription
+            return
+        }
+        onSave(draft, amount)
+    }
+}
+
+private struct ReceiptImagePreview: View {
+    let imageData: Data?
+
+    var body: some View {
+        if let imageData, let image = UIImage(data: imageData) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxHeight: 180)
+                .accessibilityLabel("Receipt image preview")
+                .accessibilityIdentifier("receipt-image-preview")
+        }
+    }
+}
+
+private struct PendingDocumentScanSelection: Identifiable {
+    let id = UUID()
+    var pages: [ReceiptDocumentCameraPage]
+}
+
+private struct ReceiptDocumentCameraPage: Identifiable {
+    var id: Int { index }
+    var index: Int
+    var image: UIImage
+}
+
+private struct ReceiptCameraCaptureView: View {
+    let useDocumentCamera: Bool
+    let completion: ([UIImage]?) -> Void
+
+    var body: some View {
+        if useDocumentCamera {
+            DocumentCameraReceiptPicker(completion: completion)
+        } else {
+            ImageCameraReceiptPicker { image in
+                completion(image.map { [$0] })
+            }
+        }
+    }
+}
+
+private struct DocumentCameraReceiptPicker: UIViewControllerRepresentable {
+    let completion: ([UIImage]?) -> Void
+
+    func makeUIViewController(context: Context) -> VNDocumentCameraViewController {
+        let controller = VNDocumentCameraViewController()
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: VNDocumentCameraViewController, context: Context) { }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(completion: completion)
+    }
+
+    final class Coordinator: NSObject, VNDocumentCameraViewControllerDelegate {
+        let completion: ([UIImage]?) -> Void
+
+        init(completion: @escaping ([UIImage]?) -> Void) {
+            self.completion = completion
+        }
+
+        func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
+            completion(nil)
+        }
+
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
+            completion(nil)
+        }
+
+        func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+            let images = (0..<scan.pageCount).map { scan.imageOfPage(at: $0) }
+            completion(images)
+        }
+    }
+}
+
+private struct ImageCameraReceiptPicker: UIViewControllerRepresentable {
+    let completion: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) { }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(completion: completion)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let completion: (UIImage?) -> Void
+
+        init(completion: @escaping (UIImage?) -> Void) {
+            self.completion = completion
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            completion(nil)
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            completion(info[.originalImage] as? UIImage)
         }
     }
 }
