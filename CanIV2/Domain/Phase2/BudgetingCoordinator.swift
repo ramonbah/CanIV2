@@ -21,7 +21,9 @@ final class BudgetingCoordinator {
     private let transactionRepository: SwiftDataTransactionRepository
     private let localDayScheduler: LocalDayRefreshScheduler
     private let salaryStore: SalarySecureStore
+    @ObservationIgnored private let receiptScanner: any ReceiptScanningService
     @ObservationIgnored private var recurrenceCoordinator: RecurrenceGenerationCoordinator
+    @ObservationIgnored private var quickAddRouter = QuickAddRouteRouter()
 
     private(set) var budgets: [Budget] = []
     private(set) var settings: AppSettings?
@@ -49,6 +51,10 @@ final class BudgetingCoordinator {
     @ObservationIgnored private var markAsSpentInFlight: Set<UUID> = []
     private(set) var monthlySalary: Decimal?
     var isSalaryVisible = false
+    private(set) var pendingReceipts: [SharedReceiptManifestRecord] = []
+    private(set) var quickAddCommand: QuickAddNavigationCommand?
+    private(set) var pendingReceiptReviewRequest: PendingReceiptReviewRequest?
+    private var dismissedPendingReceiptNoticeIDs: Set<UUID> = []
     var expandedBudgetID: UUID? {
         didSet { preferences.expandedBudgetID = expandedBudgetID }
     }
@@ -58,7 +64,7 @@ final class BudgetingCoordinator {
         self.init(context: context, clock: clock, preferences: preferences, localDayScheduler: TaskLocalDayRefreshScheduler(), salaryStore: KeychainSalaryStore())
     }
 
-    init(context: ModelContext, clock: AppClock, preferences: Phase2PreferenceStore, localDayScheduler: LocalDayRefreshScheduler, salaryStore: SalarySecureStore = KeychainSalaryStore()) {
+    init(context: ModelContext, clock: AppClock, preferences: Phase2PreferenceStore, localDayScheduler: LocalDayRefreshScheduler, salaryStore: SalarySecureStore = KeychainSalaryStore(), receiptScanner: (any ReceiptScanningService)? = nil) {
         self.context = context
         self.clock = clock
         self.preferences = preferences
@@ -68,6 +74,23 @@ final class BudgetingCoordinator {
         self.planRepository = SwiftDataBudgetPlanRepository(context: context)
         self.itemRepository = SwiftDataBudgetItemRepository(context: context)
         self.transactionRepository = SwiftDataTransactionRepository(context: context)
+#if DEBUG
+        if ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_SCANNER"] == "1" {
+            if ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_SCANNER_ERROR"] == "1" {
+                self.receiptScanner = receiptScanner ?? FakeReceiptScanningService(result: ReceiptParser(calendar: clock.calendar, locale: .autoupdatingCurrent).parse(lines: []), error: Phase5ValidationError.scanningFailed)
+            } else if ProcessInfo.processInfo.environment["UI_TESTING_FAKE_RECEIPT_SCANNER_PARTIAL"] == "1" {
+                self.receiptScanner = receiptScanner ?? FakeReceiptScanningService(result: ReceiptParser(calendar: clock.calendar, locale: .autoupdatingCurrent).parse(lines: [
+                    "Synthetic Drink RM 4.50"
+                ]))
+            } else {
+                self.receiptScanner = receiptScanner ?? FakeReceiptScanningService.uiTesting(calendar: clock.calendar)
+            }
+        } else {
+            self.receiptScanner = receiptScanner ?? VisionReceiptScanningService(calendar: clock.calendar)
+        }
+#else
+        self.receiptScanner = receiptScanner ?? VisionReceiptScanningService(calendar: clock.calendar)
+#endif
         self.recurrenceCoordinator = RecurrenceGenerationCoordinator(context: context)
         self.asOfDate = clock.now
         self.selectedTab = MainTab(rawValue: UserDefaults.standard.string(forKey: "phase2.selectedTab") ?? "") ?? .home
@@ -106,8 +129,93 @@ final class BudgetingCoordinator {
             monthlySalary = try salaryStore.readSalary()
             budgets = try budgetRepository.budgets()
             transactionFilterDraft = transactionQueryService.draftByClearingIncompatibleDescendants(transactionFilterDraft, budgets: budgets)
+            refreshWidgetDestinationSnapshot()
         } catch {
             lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func reloadPendingReceipts() async {
+        do {
+            let service = try SharedReceiptInboxService(inboxURL: SharedReceiptInboxLocator().inboxURL())
+            pendingReceipts = try await service.pendingReceipts()
+        } catch {
+            pendingReceipts = []
+        }
+    }
+
+    func data(forPendingReceipt record: SharedReceiptManifestRecord) async throws -> Data {
+        let service = try SharedReceiptInboxService(inboxURL: SharedReceiptInboxLocator().inboxURL())
+        return try await service.data(for: record)
+    }
+
+    func deletePendingReceipt(_ record: SharedReceiptManifestRecord) async throws {
+        let service = try SharedReceiptInboxService(inboxURL: SharedReceiptInboxLocator().inboxURL())
+        try await service.delete(record)
+        pendingReceipts.removeAll { $0.id == record.id }
+    }
+
+    func handleQuickAddURL(_ url: URL) {
+        guard let route = QuickAddRoute(url: url),
+              let command = quickAddRouter.command(for: route) else { return }
+        selectedTab = .budgets
+        quickAddCommand = command
+    }
+
+    func clearQuickAddCommand() {
+        quickAddCommand = nil
+    }
+
+    func quickAddDestination(for id: UUID?) -> BudgetItem? {
+        guard let id else { return nil }
+        return budgets
+            .flatMap(\.budgetPlans)
+            .flatMap(\.budgetItems)
+            .first { $0.id == id }
+    }
+
+    func quickAddPlan(fallbackDestinationID: UUID?) -> BudgetPlan? {
+        if let destination = quickAddDestination(for: fallbackDestinationID) {
+            return destination.budgetPlan
+        }
+        let selectedBudget = budgets.first { $0.id == navigationSelection.budgetID } ?? budgets.first
+        return selectedBudget?.budgetPlans.sorted { $0.sortOrder < $1.sortOrder }.first
+    }
+
+    var pendingReceiptNotice: SharedReceiptManifestRecord? {
+        pendingReceipts.first { !dismissedPendingReceiptNoticeIDs.contains($0.id) }
+    }
+
+    func dismissPendingReceiptNotice(_ record: SharedReceiptManifestRecord) {
+        dismissedPendingReceiptNoticeIDs.insert(record.id)
+    }
+
+    func requestPendingReceiptReview(_ record: SharedReceiptManifestRecord, imageData: Data) {
+        selectedTab = .budgets
+        pendingReceiptReviewRequest = PendingReceiptReviewRequest(record: record, imageData: imageData)
+        dismissPendingReceiptNotice(record)
+    }
+
+    func clearPendingReceiptReviewRequest() {
+        pendingReceiptReviewRequest = nil
+    }
+
+    private func refreshWidgetDestinationSnapshot() {
+        do {
+            var items: [WidgetDestinationSnapshot.Item] = []
+            for budget in budgets {
+                for plan in budget.budgetPlans {
+                    for item in plan.budgetItems {
+                        items.append(WidgetDestinationSnapshot.Item(id: item.id, name: item.name, planName: plan.name))
+                    }
+                }
+            }
+            items.sort { lhs, rhs in
+                lhs.planName == rhs.planName ? lhs.name < rhs.name : lhs.planName < rhs.planName
+            }
+            try WidgetDestinationSnapshotStore.appGroupStore().write(WidgetDestinationSnapshot(updatedAt: clock.now, items: items))
+        } catch {
+            // Widget data is a non-authoritative snapshot; app behavior cannot depend on it.
         }
     }
 
@@ -471,6 +579,10 @@ final class BudgetingCoordinator {
         return Phase2Calculations.transactionProjection(in: plan, destination: item, editing: transaction, draftKind: kind, draftAmount: amount, draftDate: date, asOf: asOfDate, calendar: clock.calendar)
     }
 
+    func scanReceipt(imageData: Data) async throws -> ReceiptScanResult {
+        try await receiptScanner.scan(imageData: imageData)
+    }
+
     func markAsSpentPreview(for item: BudgetItem) -> MarkAsSpentPreview {
         var preview = Phase2Calculations.markAsSpentPreview(for: item, asOf: asOfDate, calendar: clock.calendar)
         if markAsSpentInFlight.contains(item.id) {
@@ -548,6 +660,8 @@ final class BudgetingCoordinator {
             transactionFilterDraft.minimumAmountText = ""
         case .maximumAmount:
             transactionFilterDraft.maximumAmountText = ""
+        case .receipt:
+            transactionFilterDraft.receiptCriterion = .all
         }
         do {
             transactionQuery = try transactionQueryService.query(from: transactionFilterDraft, submittedSearchText: transactionSearchDraft, formatter: formatter)
@@ -626,6 +740,7 @@ final class BudgetingCoordinator {
         if transactionQuery.dateCriterion != .none { chips.append(.date(transactionQuery.dateCriterion)) }
         if transactionQuery.minimumAmount != nil { chips.append(.minimumAmount) }
         if transactionQuery.maximumAmount != nil { chips.append(.maximumAmount) }
+        if transactionQuery.receiptCriterion != .all { chips.append(.receipt(transactionQuery.receiptCriterion)) }
         return chips
     }
 
@@ -644,6 +759,7 @@ final class BudgetingCoordinator {
             }
         case .minimumAmount: "Minimum"
         case .maximumAmount: "Maximum"
+        case .receipt(let criterion): criterion.title
         }
     }
 
@@ -820,14 +936,14 @@ final class BudgetingCoordinator {
         refresh()
     }
 
-    func createTransaction(kind: TransactionKind, amountText: String, date: Date, notes: String, item: BudgetItem) throws -> Transaction {
+    func createTransaction(kind: TransactionKind, amountText: String, date: Date, notes: String, item: BudgetItem, receiptDraft: ReceiptAttachmentDraft? = nil) throws -> Transaction {
         let amount = try parsePositiveAmount(amountText)
-        let transaction = try TransactionUseCase(repository: transactionRepository).create(kind: kind, amount: amount, date: date, notes: notes, item: item, clock: FixedClock(now: clock.now, calendar: clock.calendar))
+        let transaction = try TransactionUseCase(repository: transactionRepository).create(kind: kind, amount: amount, date: date, notes: notes, item: item, receiptDraft: receiptDraft, clock: FixedClock(now: clock.now, calendar: clock.calendar))
         refresh()
         return transaction
     }
 
-    func createItemAndTransaction(kind: TransactionKind, amountText: String, date: Date, itemName: String, in plan: BudgetPlan) throws -> (transaction: Transaction, item: BudgetItem) {
+    func createItemAndTransaction(kind: TransactionKind, amountText: String, date: Date, itemName: String, in plan: BudgetPlan, receiptDraft: ReceiptAttachmentDraft? = nil) throws -> (transaction: Transaction, item: BudgetItem) {
         let amount = try parsePositiveAmount(amountText)
         let trimmedName = NameNormalizer.trimmed(itemName)
         try ValidationUseCase.validateName(trimmedName, siblings: plan.budgetItems.map(\.name))
@@ -848,12 +964,40 @@ final class BudgetingCoordinator {
             updatedAt: clock.now,
             budgetItem: item
         )
+        let receipt = receiptDraft.map {
+            ReceiptCapture(
+                imageData: $0.imageData,
+                merchant: $0.merchant,
+                date: $0.date,
+                total: $0.total,
+                createdAt: clock.now,
+                updatedAt: clock.now,
+                transaction: transaction
+            )
+        }
+        let receiptLines = receiptDraft?.lines.map { draft in
+            ReceiptLineItem(
+                rawText: draft.rawText,
+                name: draft.name,
+                amount: draft.amount,
+                isSelected: draft.isSelected,
+                createdAt: clock.now,
+                updatedAt: clock.now,
+                receiptCapture: receipt!
+            )
+        } ?? []
+        receipt?.lineItems = receiptLines
+        transaction.receipt = receipt
         plan.budgetItems.append(item)
         item.transactions.append(transaction)
         plan.updatedAt = clock.now
         plan.budget.updatedAt = clock.now
         context.insert(item)
         context.insert(transaction)
+        if let receipt {
+            context.insert(receipt)
+            receiptLines.forEach(context.insert)
+        }
         do {
             try ModelMutationService.saveValidated(context)
             refresh()
@@ -863,6 +1007,10 @@ final class BudgetingCoordinator {
             plan.budgetItems.removeAll { $0.id == item.id }
             plan.updatedAt = originalPlanUpdatedAt
             plan.budget.updatedAt = originalBudgetUpdatedAt
+            receiptLines.forEach(context.delete)
+            if let receipt {
+                context.delete(receipt)
+            }
             context.delete(transaction)
             context.delete(item)
             context.rollback()
@@ -906,14 +1054,31 @@ final class BudgetingCoordinator {
         refresh()
     }
 
+    func replaceReceipt(on transaction: Transaction, with draft: ReceiptAttachmentDraft) throws {
+        try ReceiptUseCase(context: context).replaceReceipt(on: transaction, with: draft, now: clock.now)
+        refresh()
+    }
+
+    func updateReceiptDetails(on transaction: Transaction, with draft: ReceiptAttachmentDraft, transactionAmount: Decimal?) throws {
+        try ReceiptUseCase(context: context).updateReceiptDetails(on: transaction, with: draft, transactionAmount: transactionAmount, now: clock.now)
+        refresh()
+    }
+
+    func removeReceipt(from transaction: Transaction) throws {
+        try ReceiptUseCase(context: context).removeReceipt(from: transaction, now: clock.now)
+        refresh()
+    }
+
     func transactionDeletionTitle(for transaction: Transaction) -> String {
         let date = UserVisibleDateFormatter(calendar: clock.calendar, locale: .autoupdatingCurrent, referenceDate: asOfDate).string(for: transaction.date)
-        return "Delete \(transaction.kind == .income ? "income" : "expense") \(formatter.string(for: transaction.amount)) from \(date)?"
+        let receiptSuffix = transaction.receipt == nil ? "" : " The attached receipt and recognized lines will also be deleted."
+        return "Delete \(transaction.kind == .income ? "income" : "expense") \(formatter.string(for: transaction.amount)) from \(date)?\(receiptSuffix)"
     }
 
     func transactionAccessibilityLabel(for transaction: Transaction) -> String {
         let date = UserVisibleDateFormatter(calendar: clock.calendar, locale: .autoupdatingCurrent, referenceDate: asOfDate).string(for: transaction.date)
-        return "\(transaction.kind == .income ? "Income" : "Expense"), \(formatter.string(for: transaction.amount)), \(date)\(transaction.notes.map { ", \($0)" } ?? "")"
+        let receiptSuffix = transaction.receipt == nil ? "" : ", has receipt"
+        return "\(transaction.kind == .income ? "Income" : "Expense"), \(formatter.string(for: transaction.amount)), \(date)\(transaction.notes.map { ", \($0)" } ?? "")\(receiptSuffix)"
     }
 
     func progress(spent: Decimal, funds: Decimal) -> ProgressState {
@@ -998,6 +1163,37 @@ final class BudgetingCoordinator {
             expandedBudgetID = budget.id
             navigationSelection.selectBudget(budget.id)
             navigationSelection.selectPlan(plan.id)
+            refresh()
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func seedSavedReceiptForUITesting() {
+        guard ProcessInfo.processInfo.environment["UI_TESTING_SEED_SAVED_RECEIPT"] == "1", budgets.isEmpty else { return }
+        do {
+            _ = saveCurrency("MYR")
+            let now = clock.now
+            let budget = try BudgetUseCase(repository: budgetRepository).create(name: "Trip", now: now)
+            let plan = try PlanUseCase(repository: planRepository).create(name: "August", startingAmount: 0, in: budget, now: now)
+            let meals = try ItemUseCase(repository: itemRepository).create(name: "Meals", unitAmount: 10, multiplier: 1, in: plan, now: now)
+            let transaction = try TransactionUseCase(repository: transactionRepository).create(kind: .expense, amount: Decimal(string: "12.30")!, date: now, notes: "Kedai Makan Contoh", item: meals, clock: FixedClock(now: now, calendar: clock.calendar))
+            let receipt = ReceiptAttachmentDraft(
+                imageData: Data("synthetic saved receipt".utf8),
+                merchant: "Kedai Makan Contoh",
+                date: now,
+                total: Decimal(string: "12.30"),
+                lines: [
+                    ReceiptLineDraft(rawText: "Nasi Lemak RM 8.50", name: "Nasi Lemak", amount: Decimal(string: "8.50"), isSelected: true),
+                    ReceiptLineDraft(rawText: "Teh Ais RM 3.20", name: "Teh Ais", amount: Decimal(string: "3.20"), isSelected: false),
+                    ReceiptLineDraft(rawText: "Service Charge RM 0.60", name: "Service Charge", amount: Decimal(string: "0.60"), isSelected: true)
+                ]
+            )
+            try ReceiptUseCase(context: context).attach(receipt, to: transaction, now: now)
+            expandedBudgetID = budget.id
+            navigationSelection.selectBudget(budget.id)
+            navigationSelection.selectPlan(plan.id)
+            navigationSelection.selectItem(meals.id)
             refresh()
         } catch {
             lastErrorMessage = error.localizedDescription

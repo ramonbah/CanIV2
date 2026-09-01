@@ -182,8 +182,6 @@ private extension ModelContext {
         for lineItem in Array(receipt.lineItems) {
             delete(lineItem)
         }
-        try ModelMutationService.saveValidated(self)
         delete(receipt)
-        try ModelMutationService.saveValidated(self)
     }
 }
